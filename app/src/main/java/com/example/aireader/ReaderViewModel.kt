@@ -49,8 +49,10 @@ data class ReaderState(
     val modes: List<ReadingMode> = emptyList(),
     val selectedModeId: String? = null,
     val article: String = "",
+    val preprocessOptions: PreprocessOptions = PreprocessOptions(),
     val settings: ApiSettings = ApiSettings(),
-    val result: String = "尚未生成结果。第一阶段未连接 AI 服务。",
+    val preparedUserMessage: String? = null,
+    val result: String = "尚未生成结果。当前尚未连接 AI 服务。",
     val loaded: Boolean = false
 )
 
@@ -63,6 +65,7 @@ private val builtIns = listOf(
 
 class ReaderViewModel(application: Application) : AndroidViewModel(application) {
     private val context = application.applicationContext
+    private val preprocessSettings = PreprocessSettingsStore(context.dataStore)
     private val _state = MutableStateFlow(ReaderState())
     val state: StateFlow<ReaderState> = _state
 
@@ -95,15 +98,29 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         )
         _state.value = _state.value.copy(
             modes = defaults + savedModes.filter { !it.builtIn && builtIns.none { pair -> pair.first == it.id } },
-            selectedModeId = defaults.first().id, settings = settings, loaded = true
+            selectedModeId = defaults.first().id,
+            preprocessOptions = preprocessSettings.options.first(),
+            settings = settings, loaded = true
         )
     }
 
     fun selectMode(id: String) { _state.value = _state.value.copy(selectedModeId = id) }
-    fun setArticle(value: String) { _state.value = _state.value.copy(article = value) }
+    fun setArticle(value: String) { _state.value = _state.value.copy(article = value, preparedUserMessage = null) }
     fun clearArticle() = setArticle("")
+    fun processedArticle(): String = ArticlePreprocessor.process(_state.value.article, _state.value.preprocessOptions)
+
+    fun savePreprocessOptions(options: PreprocessOptions) {
+        _state.value = _state.value.copy(preprocessOptions = options, preparedUserMessage = null)
+        viewModelScope.launch { preprocessSettings.save(options) }
+    }
+
     fun startReading() {
-        _state.value = _state.value.copy(result = "第一阶段仅提供界面，尚未发送 API 请求或生成 AI 结果。")
+        val mode = _state.value.modes.firstOrNull { it.id == _state.value.selectedModeId } ?: return
+        val message = buildUserMessage(mode.prompt, processedArticle())
+        _state.value = _state.value.copy(
+            preparedUserMessage = message,
+            result = "已准备好预处理文章和单条 User Message。当前尚未连接 AI 服务，未发送请求或生成 AI 结果。"
+        )
     }
 
     fun saveMode(id: String?, name: String, prompt: String) {

@@ -101,6 +101,14 @@ paraOnce = 3
 11. 保留原文输入框内容，只处理发送副本。
 12. 预览内容与实际发送内容必须一致。
 
+### 第二阶段实现约定
+
+- 预处理逻辑集中在纯 Kotlin `ArticlePreprocessor.process(article, options)`；预览和开始阅读共用该函数。
+- `PreprocessOptions` 包含启用状态、1–100 的 `paraOnce`、标题识别和编号列表识别，默认值分别为 `true`、`3`、`true`、`true`。
+- 标题和编号列表优先独立编号；遇到它们时先输出未满组的普通正文。中文冒号不参与标题标点判断。
+- 用户原文仅保留在内存中的输入状态。预处理选项使用 DataStore 保存；后续 API 输入由 `buildUserMessage` 将完整提示词与预处理正文拼为单条 User Message。
+- 当前阶段没有真实 API 请求，结果区域必须明确说明未连接，不能显示模拟 AI 响应。
+
 ## 数据安全
 
 - API Key 不写入代码或日志。

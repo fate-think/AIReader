@@ -6,11 +6,16 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 
@@ -60,6 +65,8 @@ private fun App(state: ReaderState, model: ReaderViewModel) {
 @Composable
 private fun ReaderPage(state: ReaderState, model: ReaderViewModel, modifier: Modifier) {
     var expanded by remember { mutableStateOf(false) }
+    var showPreprocessSettings by remember { mutableStateOf(false) }
+    var preview by remember { mutableStateOf<String?>(null) }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("阅读模式", style = MaterialTheme.typography.titleMedium)
         Box {
@@ -78,12 +85,81 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel, modifier: Mod
             Text("字符数：${state.article.length}")
             TextButton(onClick = model::clearArticle, enabled = state.article.isNotEmpty()) { Text("清空文章") }
         }
+        OutlinedButton(onClick = { showPreprocessSettings = true }, modifier = Modifier.fillMaxWidth()) {
+            Text("文章预处理设置")
+        }
+        OutlinedButton(onClick = { preview = model.processedArticle() },
+            enabled = state.article.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
+            Text("预览处理结果")
+        }
         Button(onClick = model::startReading, enabled = state.article.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
             Text("开始阅读")
         }
         HorizontalDivider()
         Text("AI 阅读结果", style = MaterialTheme.typography.titleMedium)
         Text(state.result, style = MaterialTheme.typography.bodyMedium)
+    }
+    if (showPreprocessSettings) PreprocessSettingsDialog(state.preprocessOptions,
+        onSave = { model.savePreprocessOptions(it); showPreprocessSettings = false },
+        onDismiss = { showPreprocessSettings = false })
+    preview?.let { processed ->
+        PreviewDialog(processed, state.article.length, onDismiss = { preview = null })
+    }
+}
+
+@Composable
+private fun PreprocessSettingsDialog(initial: PreprocessOptions, onSave: (PreprocessOptions) -> Unit,
+                                     onDismiss: () -> Unit) {
+    var enabled by remember(initial) { mutableStateOf(initial.enabled) }
+    var paraOnce by remember(initial) { mutableStateOf(initial.paraOnce.toString()) }
+    var detectTitles by remember(initial) { mutableStateOf(initial.detectTitles) }
+    var detectLists by remember(initial) { mutableStateOf(initial.detectNumberedLists) }
+    val count = paraOnce.toIntOrNull()
+    val validCount = count?.let { it in 1..100 } == true
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("文章预处理") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("启用预处理")
+                    Switch(checked = enabled, onCheckedChange = { enabled = it })
+                }
+                OutlinedTextField(value = paraOnce, onValueChange = { paraOnce = it },
+                    label = { Text("每组合并段数（1–100）") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    isError = !validCount, modifier = Modifier.fillMaxWidth())
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("自动识别标题")
+                    Switch(checked = detectTitles, onCheckedChange = { detectTitles = it })
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("自动识别编号列表")
+                    Switch(checked = detectLists, onCheckedChange = { detectLists = it })
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onSave(PreprocessOptions(enabled, count ?: 3, detectTitles, detectLists))
+            }, enabled = validCount) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
+}
+
+@Composable
+private fun PreviewDialog(processed: String, originalLength: Int, onDismiss: () -> Unit) {
+    val clipboard = LocalClipboardManager.current
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth().fillMaxHeight(0.82f)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("预览处理结果", style = MaterialTheme.typography.titleLarge)
+                Text("处理前：$originalLength 字符 · 处理后：${processed.length} 字符")
+                Text(processed, modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { clipboard.setText(AnnotatedString(processed)) }) { Text("复制预处理结果") }
+                    TextButton(onClick = onDismiss) { Text("关闭") }
+                }
+            }
+        }
     }
 }
 
