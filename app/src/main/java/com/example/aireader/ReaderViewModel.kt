@@ -12,29 +12,20 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import org.json.JSONArray
+import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
 import java.security.KeyStore
-import java.util.UUID
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 private val Context.dataStore by preferencesDataStore("reader_settings")
-private val modesKey = stringPreferencesKey("modes")
 private val settingsKey = stringPreferencesKey("settings")
 private val secretKey = stringPreferencesKey("api_key_encrypted")
-
-data class ReadingMode(
-    val id: String,
-    val name: String,
-    val prompt: String,
-    val builtIn: Boolean,
-    val assetName: String? = null
-)
 
 data class ApiSettings(
     val baseUrl: String = "",
@@ -53,58 +44,70 @@ data class ReaderState(
     val settings: ApiSettings = ApiSettings(),
     val preparedUserMessage: String? = null,
     val result: String = "尚未生成结果。当前尚未连接 AI 服务。",
+    val storageError: String? = null,
     val loaded: Boolean = false
 )
 
-private val builtIns = listOf(
-    "builtin.keypoints.v1" to "信息点提取V1.md",
-    "builtin.keypoints.v2" to "信息点提取V2.md",
-    "builtin.full_analysis.v1" to "全文分析总结V1.md",
-    "builtin.full_analysis.v2" to "全文分析总结V2.md"
+data class FinalRequestPreview(
+    val modeName: String,
+    val prompt: String,
+    val processedArticle: String,
+    val userMessage: String
 )
 
 class ReaderViewModel(application: Application) : AndroidViewModel(application) {
     private val context = application.applicationContext
     private val preprocessSettings = PreprocessSettingsStore(context.dataStore)
+    private val promptRepository = PromptRepository(context.dataStore) { file ->
+        context.assets.open("prompts/$file").bufferedReader(Charsets.UTF_8).use { it.readText() }
+    }
     private val _state = MutableStateFlow(ReaderState())
     val state: StateFlow<ReaderState> = _state
 
     init { viewModelScope.launch { load() } }
 
     private suspend fun load() {
-        val prefs = context.dataStore.data.first()
-        val saved = runCatching { JSONArray(prefs[modesKey] ?: "[]") }.getOrDefault(JSONArray())
-        val savedModes = (0 until saved.length()).mapNotNull { index ->
-            runCatching {
-                val item = saved.getJSONObject(index)
-                ReadingMode(item.getString("id"), item.getString("name"), item.getString("prompt"),
-                    item.optBoolean("builtIn"), item.optString("assetName").ifBlank { null })
-            }.getOrNull()
-        }
-        val defaults = builtIns.map { (id, file) ->
-            savedModes.firstOrNull { it.id == id } ?: ReadingMode(
-                id, file.removeSuffix(".md"), context.assets.open("prompts/$file").bufferedReader(Charsets.UTF_8).use { it.readText() },
-                true, file
+        try {
+            val prefs = context.dataStore.data.first()
+            val settingsJson = runCatching { JSONObject(prefs[settingsKey] ?: "{}") }.getOrDefault(JSONObject())
+            val settings = ApiSettings(
+                settingsJson.optString("baseUrl"),
+                runCatching { decrypt(prefs[secretKey] ?: "") }.getOrDefault(""),
+                settingsJson.optString("modelId"),
+                settingsJson.optString("temperature", "0.7"),
+                settingsJson.optString("maxOutputTokens", "2048"),
+                settingsJson.optBoolean("streaming", true)
             )
+            val options = preprocessSettings.options.first()
+            promptRepository.migrateIfNeeded()
+            _state.value = _state.value.copy(settings = settings, preprocessOptions = options)
+            promptRepository.catalogs.collect { catalog ->
+                _state.value = _state.value.copy(
+                    modes = catalog.modes,
+                    selectedModeId = catalog.selectedModeId,
+                    preparedUserMessage = null,
+                    loaded = true
+                )
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            showStorageError(error)
+            _state.value = _state.value.copy(loaded = true)
         }
-        val settingsJson = runCatching { JSONObject(prefs[settingsKey] ?: "{}") }.getOrDefault(JSONObject())
-        val settings = ApiSettings(
-            settingsJson.optString("baseUrl"),
-            runCatching { decrypt(prefs[secretKey] ?: "") }.getOrDefault(""),
-            settingsJson.optString("modelId"),
-            settingsJson.optString("temperature", "0.7"),
-            settingsJson.optString("maxOutputTokens", "2048"),
-            settingsJson.optBoolean("streaming", true)
-        )
-        _state.value = _state.value.copy(
-            modes = defaults + savedModes.filter { !it.builtIn && builtIns.none { pair -> pair.first == it.id } },
-            selectedModeId = defaults.first().id,
-            preprocessOptions = preprocessSettings.options.first(),
-            settings = settings, loaded = true
-        )
     }
 
-    fun selectMode(id: String) { _state.value = _state.value.copy(selectedModeId = id) }
+    private fun showStorageError(error: Exception) {
+        _state.value = _state.value.copy(storageError = error.message ?: "无法读取或保存提示词数据")
+    }
+
+    fun clearStorageError() { _state.value = _state.value.copy(storageError = null) }
+
+    fun selectMode(id: String) = viewModelScope.launch {
+        try { promptRepository.select(id) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: Exception) { showStorageError(error) }
+    }
     fun setArticle(value: String) { _state.value = _state.value.copy(article = value, preparedUserMessage = null) }
     fun clearArticle() = setArticle("")
     fun processedArticle(): String = ArticlePreprocessor.process(_state.value.article, _state.value.preprocessOptions)
@@ -115,48 +118,41 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun startReading() {
-        val mode = _state.value.modes.firstOrNull { it.id == _state.value.selectedModeId } ?: return
-        val message = buildUserMessage(mode.prompt, processedArticle())
+        val message = finalRequestPreview()?.userMessage ?: return
         _state.value = _state.value.copy(
             preparedUserMessage = message,
             result = "已准备好预处理文章和单条 User Message。当前尚未连接 AI 服务，未发送请求或生成 AI 结果。"
         )
     }
 
-    fun saveMode(id: String?, name: String, prompt: String) {
-        if (name.isBlank() || prompt.isBlank()) return
-        val current = _state.value.modes
-        val updated = if (id == null) current + ReadingMode(UUID.randomUUID().toString(), name.trim(), prompt, false)
-            else current.map { if (it.id == id) it.copy(name = name.trim(), prompt = prompt) else it }
-        _state.value = _state.value.copy(modes = updated)
-        persistModes(updated)
+    fun finalRequestPreview(): FinalRequestPreview? {
+        val mode = _state.value.modes.firstOrNull { it.id == _state.value.selectedModeId } ?: return null
+        val article = processedArticle()
+        return FinalRequestPreview(mode.name, mode.prompt, article, buildUserMessage(mode.prompt, article))
     }
 
-    fun deleteMode(id: String) {
-        val mode = _state.value.modes.firstOrNull { it.id == id } ?: return
-        if (mode.builtIn) return
-        val updated = _state.value.modes.filterNot { it.id == id }
-        _state.value = _state.value.copy(modes = updated,
-            selectedModeId = if (_state.value.selectedModeId == id) updated.firstOrNull()?.id else _state.value.selectedModeId)
-        persistModes(updated)
-    }
-
-    fun restoreDefault(id: String) {
-        val mode = _state.value.modes.firstOrNull { it.id == id && it.builtIn } ?: return
-        val file = mode.assetName ?: return
-        val original = context.assets.open("prompts/$file").bufferedReader(Charsets.UTF_8).use { it.readText() }
-        val updated = _state.value.modes.map { if (it.id == id) it.copy(name = file.removeSuffix(".md"), prompt = original) else it }
-        _state.value = _state.value.copy(modes = updated)
-        persistModes(updated)
-    }
-
-    private fun persistModes(modes: List<ReadingMode>) = viewModelScope.launch {
-        val array = JSONArray()
-        modes.forEach { mode ->
-            array.put(JSONObject().put("id", mode.id).put("name", mode.name).put("prompt", mode.prompt)
-                .put("builtIn", mode.builtIn).put("assetName", mode.assetName ?: ""))
+    suspend fun saveMode(id: String?, name: String, prompt: String): Boolean {
+        return try {
+            if (id == null) promptRepository.add(name, prompt) else promptRepository.save(id, name, prompt)
+            true
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            showStorageError(error)
+            false
         }
-        context.dataStore.edit { it[modesKey] = array.toString() }
+    }
+
+    fun deleteMode(id: String) = viewModelScope.launch {
+        try { promptRepository.delete(id) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: Exception) { showStorageError(error) }
+    }
+
+    fun restoreDefault(id: String) = viewModelScope.launch {
+        try { promptRepository.restoreDefault(id) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: Exception) { showStorageError(error) }
     }
 
     fun saveSettings(value: ApiSettings) {

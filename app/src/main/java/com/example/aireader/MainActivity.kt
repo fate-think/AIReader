@@ -2,6 +2,7 @@ package com.example.aireader
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -9,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -18,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -32,9 +35,9 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun App(state: ReaderState, model: ReaderViewModel) {
-    var page by remember { mutableStateOf(0) }
-    var editingId by remember { mutableStateOf<String?>(null) }
-    var creating by remember { mutableStateOf(false) }
+    var page by rememberSaveable { mutableStateOf(0) }
+    var editingId by rememberSaveable { mutableStateOf<String?>(null) }
+    var creating by rememberSaveable { mutableStateOf(false) }
     Scaffold(
         topBar = { Surface(shadowElevation = 2.dp) {
             Text(when { creating || editingId != null -> "编辑阅读模式"; page == 0 -> "AI 阅读助手"; page == 1 -> "提示词管理"; else -> "API 设置" },
@@ -50,15 +53,29 @@ private fun App(state: ReaderState, model: ReaderViewModel) {
         val modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp)
         when {
             !state.loaded -> Box(modifier) { CircularProgressIndicator() }
+            state.modes.isEmpty() -> Text("提示词数据读取失败：${state.storageError ?: "未知错误"}", modifier = modifier)
             creating || editingId != null -> ModeEditor(
                 mode = state.modes.firstOrNull { it.id == editingId },
-                onSave = { name, prompt -> model.saveMode(editingId, name, prompt); creating = false; editingId = null },
-                onCancel = { creating = false; editingId = null }, modifier = modifier)
+                onSave = { name, prompt -> model.saveMode(editingId, name, prompt) },
+                onSaved = { creating = false; editingId = null },
+                onCancel = { creating = false; editingId = null },
+                onRestore = state.modes.firstOrNull { it.id == editingId && it.builtIn }?.let { mode ->
+                    { model.restoreDefault(mode.id); editingId = null }
+                },
+                onDelete = state.modes.firstOrNull { it.id == editingId && !it.builtIn }?.let { mode ->
+                    { model.deleteMode(mode.id); editingId = null }
+                },
+                modifier = modifier)
             page == 0 -> ReaderPage(state, model, modifier)
             page == 1 -> ModesPage(state, model, onEdit = { editingId = it },
                 onAdd = { creating = true }, modifier = modifier)
             else -> SettingsPage(state.settings, model::saveSettings, modifier)
         }
+    }
+    if (state.modes.isNotEmpty() && state.storageError != null) {
+        AlertDialog(onDismissRequest = model::clearStorageError,
+            title = { Text("提示词保存失败") }, text = { Text(state.storageError.orEmpty()) },
+            confirmButton = { TextButton(onClick = model::clearStorageError) { Text("知道了") } })
     }
 }
 
@@ -74,7 +91,14 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel, modifier: Mod
                 Text(state.modes.firstOrNull { it.id == state.selectedModeId }?.name ?: "选择阅读模式")
             }
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                state.modes.forEach { mode -> DropdownMenuItem(text = { Text(mode.name) },
+                Text("内置阅读模式", modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.labelMedium)
+                state.modes.filter { it.builtIn }.forEach { mode -> DropdownMenuItem(text = { Text(mode.name) },
+                    onClick = { model.selectMode(mode.id); expanded = false }) }
+                HorizontalDivider()
+                Text("我的自定义提示词", modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.labelMedium)
+                state.modes.filterNot { it.builtIn }.forEach { mode -> DropdownMenuItem(text = { Text(mode.name) },
                     onClick = { model.selectMode(mode.id); expanded = false }) }
             }
         }
@@ -92,18 +116,53 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel, modifier: Mod
             enabled = state.article.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
             Text("预览处理结果")
         }
+        var finalPreview by remember { mutableStateOf<FinalRequestPreview?>(null) }
+        OutlinedButton(onClick = { finalPreview = model.finalRequestPreview() },
+            enabled = state.article.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
+            Text("预览最终发送内容")
+        }
         Button(onClick = model::startReading, enabled = state.article.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
             Text("开始阅读")
         }
         HorizontalDivider()
         Text("AI 阅读结果", style = MaterialTheme.typography.titleMedium)
         Text(state.result, style = MaterialTheme.typography.bodyMedium)
+        finalPreview?.let { request ->
+            FinalRequestPreviewDialog(request, onDismiss = { finalPreview = null })
+        }
     }
     if (showPreprocessSettings) PreprocessSettingsDialog(state.preprocessOptions,
         onSave = { model.savePreprocessOptions(it); showPreprocessSettings = false },
         onDismiss = { showPreprocessSettings = false })
     preview?.let { processed ->
         PreviewDialog(processed, state.article.length, onDismiss = { preview = null })
+    }
+}
+
+@Composable
+private fun FinalRequestPreviewDialog(request: FinalRequestPreview, onDismiss: () -> Unit) {
+    val clipboard = LocalClipboardManager.current
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth().fillMaxHeight(0.86f)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("预览最终发送内容", style = MaterialTheme.typography.titleLarge)
+                Text("当前阅读模式：${request.modeName}")
+                Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+                    Text("当前提示词", style = MaterialTheme.typography.titleMedium)
+                    Text(request.prompt)
+                    Spacer(Modifier.height(16.dp))
+                    Text("预处理后的文章", style = MaterialTheme.typography.titleMedium)
+                    Text(request.processedArticle)
+                    Spacer(Modifier.height(16.dp))
+                    Text("完整 User Message", style = MaterialTheme.typography.titleMedium)
+                    Text(request.userMessage)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { clipboard.setText(AnnotatedString(request.userMessage)) }) { Text("复制完整内容") }
+                    TextButton(onClick = onDismiss) { Text("关闭") }
+                }
+            }
+        }
     }
 }
 
@@ -166,17 +225,37 @@ private fun PreviewDialog(processed: String, originalLength: Int, onDismiss: () 
 @Composable
 private fun ModesPage(state: ReaderState, model: ReaderViewModel, onEdit: (String) -> Unit,
                       onAdd: () -> Unit, modifier: Modifier) {
+    var pendingRestore by remember { mutableStateOf<ReadingMode?>(null) }
+    var pendingDelete by remember { mutableStateOf<ReadingMode?>(null) }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("内置提示词", style = MaterialTheme.typography.titleLarge)
         state.modes.filter { it.builtIn }.forEach { mode -> ModeCard(mode, onEdit,
-            onRestore = { model.restoreDefault(mode.id) }, onDelete = null) }
+            onRestore = { pendingRestore = mode }, onDelete = null) }
         HorizontalDivider()
-        Text("自定义提示词", style = MaterialTheme.typography.titleLarge)
+        Text("我的自定义提示词", style = MaterialTheme.typography.titleLarge)
         state.modes.filterNot { it.builtIn }.forEach { mode -> ModeCard(mode, onEdit,
-            onRestore = null, onDelete = { model.deleteMode(mode.id) }) }
+            onRestore = null, onDelete = { pendingDelete = mode }) }
         if (state.modes.none { !it.builtIn }) Text("还没有自定义阅读模式")
-        Button(onClick = onAdd, modifier = Modifier.fillMaxWidth()) { Text("新增自定义提示词") }
+        Button(onClick = onAdd, modifier = Modifier.fillMaxWidth()) { Text("+ 新增提示词") }
     }
+    pendingRestore?.let { mode ->
+        ConfirmModeActionDialog("恢复默认提示词？", "将从 APK 内置文件恢复“${mode.name}”的提示词正文。",
+            onConfirm = { model.restoreDefault(mode.id); pendingRestore = null },
+            onDismiss = { pendingRestore = null })
+    }
+    pendingDelete?.let { mode ->
+        ConfirmModeActionDialog("删除自定义提示词？", "将删除“${mode.name}”。此操作不可撤销。",
+            onConfirm = { model.deleteMode(mode.id); pendingDelete = null },
+            onDismiss = { pendingDelete = null })
+    }
+}
+
+@Composable
+private fun ConfirmModeActionDialog(title: String, message: String,
+                                    onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(title) }, text = { Text(message) },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("确认") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
 }
 
 @Composable
@@ -195,20 +274,49 @@ private fun ModeCard(mode: ReadingMode, onEdit: (String) -> Unit,
 }
 
 @Composable
-private fun ModeEditor(mode: ReadingMode?, onSave: (String, String) -> Unit,
-                       onCancel: () -> Unit, modifier: Modifier) {
-    var name by remember(mode?.id) { mutableStateOf(mode?.name ?: "") }
-    var prompt by remember(mode?.id) { mutableStateOf(mode?.prompt ?: "") }
+private fun ModeEditor(mode: ReadingMode?, onSave: suspend (String, String) -> Boolean,
+                       onSaved: () -> Unit, onCancel: () -> Unit, onRestore: (() -> Unit)?,
+                       onDelete: (() -> Unit)?, modifier: Modifier) {
+    val scope = rememberCoroutineScope()
+    var name by rememberSaveable(mode?.id) { mutableStateOf(mode?.name ?: "") }
+    var prompt by rememberSaveable(mode?.id) { mutableStateOf(mode?.prompt ?: "") }
+    var saving by remember { mutableStateOf(false) }
+    var confirmDiscard by remember { mutableStateOf(false) }
+    var confirmRestore by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val hasChanges = name != (mode?.name ?: "") || prompt != (mode?.prompt ?: "")
+    val leave = { if (hasChanges) confirmDiscard = true else onCancel() }
+    BackHandler { if (!saving) leave() }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("模式名称") },
             modifier = Modifier.fillMaxWidth())
         OutlinedTextField(value = prompt, onValueChange = { prompt = it }, label = { Text("提示词") },
-            modifier = Modifier.fillMaxWidth().heightIn(min = 300.dp))
+            modifier = Modifier.fillMaxWidth().height(360.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { onSave(name, prompt) }, enabled = name.isNotBlank() && prompt.isNotBlank()) { Text("保存") }
-            OutlinedButton(onClick = onCancel) { Text("取消") }
+            Button(onClick = {
+                saving = true
+                scope.launch {
+                    val success = onSave(name, prompt)
+                    saving = false
+                    if (success) onSaved()
+                }
+            }, enabled = !saving && name.isNotBlank() && prompt.isNotBlank()) { Text("保存") }
+            OutlinedButton(onClick = leave, enabled = !saving) { Text("取消") }
         }
+        if (onRestore != null) OutlinedButton(onClick = { confirmRestore = true }, enabled = !saving) { Text("恢复默认") }
+        if (onDelete != null) TextButton(onClick = { confirmDelete = true }, enabled = !saving) { Text("删除此提示词") }
     }
+    if (confirmDiscard) ConfirmModeActionDialog("放弃未保存修改？", "编辑内容尚未保存。",
+        onConfirm = { confirmDiscard = false; onCancel() },
+        onDismiss = { confirmDiscard = false })
+    if (confirmRestore && onRestore != null) ConfirmModeActionDialog("恢复默认提示词？",
+        "将从 APK 内置文件恢复原始提示词；未保存的编辑内容会丢失。",
+        onConfirm = { confirmRestore = false; onRestore() },
+        onDismiss = { confirmRestore = false })
+    if (confirmDelete && onDelete != null) ConfirmModeActionDialog("删除自定义提示词？",
+        "此模式将被删除，未保存的编辑内容也会丢失。",
+        onConfirm = { confirmDelete = false; onDelete() },
+        onDismiss = { confirmDelete = false })
 }
 
 @Composable

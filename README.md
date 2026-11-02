@@ -10,15 +10,21 @@ Kotlin、Jetpack Compose、Material 3、MVVM/StateFlow。minSdk 26，compileSdk/
 
 ## 数据
 
-四份内置提示词位于 `app/src/main/assets/prompts/`。内置模式可编辑并恢复默认，不能删除；自定义模式可任意新增、编辑、重命名、删除。模式和普通设置使用 DataStore 保存，API Key 使用 Android Keystore 加密后保存。文章只保存在界面状态中。
+四份内置提示词位于 `app/src/main/assets/prompts/`。内置模式有稳定 ID，可编辑，并可在确认后从 assets 恢复默认；不能删除。提示词管理页的“我的自定义提示词”区域可持续新增、编辑、重命名和删除任意多套模式。删除前会确认；删除当前模式后自动选中第一套内置模式。编辑未保存内容时返回会提醒。
+
+模式列表、创建顺序和当前选择统一保存在 DataStore 中。旧版 `modes` 数据首次读取时迁移；数据解析失败会显示错误并停止写入，避免覆盖已保存的提示词。API Key 使用 Android Keystore 加密后保存，文章只保存在界面状态中。
 
 ## 文章预处理
 
 在阅读页粘贴文章后，点击“文章预处理设置”可调整启用状态、每组合并段数（1–100）、标题识别和编号列表识别。设置通过 DataStore 保存。点击“预览处理结果”可查看完整处理结果、处理前后字符数并复制；关闭预览后输入框仍是原文。
 
-预处理会跳过空白行，连续普通自然段按设置数量直接拼接，并为正文、标题和编号列表添加连续的段落编号。预览与“开始阅读”共用 `ArticlePreprocessor.process`。后者将当前模式的完整提示词与处理后的文章拼成单条 User Message，暂存在内存中供后续 API 阶段使用；不生成 System 或 Developer Message。
+预处理会跳过空白行，连续普通自然段按设置数量直接拼接，并为正文、标题和编号列表添加连续的段落编号。“预览处理结果”与“开始阅读”共用 `ArticlePreprocessor.process`。阅读页另有“预览最终发送内容”，可查看并复制当前模式名称、完整提示词、处理后的文章及完整 User Message。完整消息由 `buildUserMessage` 拼接，暂存在内存中供后续 API 阶段使用；不生成 System 或 Developer Message。
 
 网络请求、流式输出和 Markdown 结果展示将在后续阶段实现。
+
+## 测试
+
+GitHub Actions 运行 `testDebugUnitTest`。提示词管理测试覆盖内置 assets、编辑与恢复、五套并发新增、UUID 与顺序、删除回退、旧数据迁移、异常数据保护、长 Markdown 持久化和最终消息拼接；原有文章预处理测试继续保留。
 
 ## Wrapper 说明
 
