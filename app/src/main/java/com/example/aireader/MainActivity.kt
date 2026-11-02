@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -69,7 +70,7 @@ private fun App(state: ReaderState, model: ReaderViewModel) {
             page == 0 -> ReaderPage(state, model, modifier)
             page == 1 -> ModesPage(state, model, onEdit = { editingId = it },
                 onAdd = { creating = true }, modifier = modifier)
-            else -> SettingsPage(state.settings, model::saveSettings, modifier)
+            else -> SettingsPage(state, model, modifier)
         }
     }
     if (state.modes.isNotEmpty() && state.storageError != null) {
@@ -84,6 +85,8 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel, modifier: Mod
     var expanded by remember { mutableStateOf(false) }
     var showPreprocessSettings by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf<String?>(null) }
+    val clipboard = LocalClipboardManager.current
+    val active = state.status == ReadingStatus.Loading || state.status == ReadingStatus.Streaming
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("阅读模式", style = MaterialTheme.typography.titleMedium)
         Box {
@@ -121,12 +124,30 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel, modifier: Mod
             enabled = state.article.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
             Text("预览最终发送内容")
         }
-        Button(onClick = model::startReading, enabled = state.article.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
-            Text("开始阅读")
+        Button(onClick = { if (active) model.stopReading() else model.startReading() },
+            enabled = active || state.article.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
+            Text(if (active) "停止生成" else "开始阅读")
+        }
+        if (!active && state.status != ReadingStatus.Idle) {
+            OutlinedButton(onClick = model::startReading, enabled = state.article.isNotBlank(),
+                modifier = Modifier.fillMaxWidth()) { Text("重新生成") }
         }
         HorizontalDivider()
         Text("AI 阅读结果", style = MaterialTheme.typography.titleMedium)
-        Text(state.result, style = MaterialTheme.typography.bodyMedium)
+        Text(when (state.status) {
+            ReadingStatus.Idle -> "等待开始"
+            ReadingStatus.Loading -> "正在连接…"
+            ReadingStatus.Streaming -> "正在生成…"
+            ReadingStatus.Completed -> "已完成"
+            ReadingStatus.Cancelled -> "已停止"
+            ReadingStatus.Error -> "请求失败"
+        })
+        if (active) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        state.readingError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        if (state.result.isNotEmpty()) {
+            MarkdownResult(state.result)
+            TextButton(onClick = { clipboard.setText(AnnotatedString(state.result)) }) { Text("复制结果") }
+        }
         finalPreview?.let { request ->
             FinalRequestPreviewDialog(request, onDismiss = { finalPreview = null })
         }
@@ -146,17 +167,8 @@ private fun FinalRequestPreviewDialog(request: FinalRequestPreview, onDismiss: (
         Surface(shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth().fillMaxHeight(0.86f)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("预览最终发送内容", style = MaterialTheme.typography.titleLarge)
-                Text("当前阅读模式：${request.modeName}")
-                Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
-                    Text("当前提示词", style = MaterialTheme.typography.titleMedium)
-                    Text(request.prompt)
-                    Spacer(Modifier.height(16.dp))
-                    Text("预处理后的文章", style = MaterialTheme.typography.titleMedium)
-                    Text(request.processedArticle)
-                    Spacer(Modifier.height(16.dp))
-                    Text("完整 User Message", style = MaterialTheme.typography.titleMedium)
-                    Text(request.userMessage)
-                }
+                Text(request.userMessage,
+                    modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { clipboard.setText(AnnotatedString(request.userMessage)) }) { Text("复制完整内容") }
                     TextButton(onClick = onDismiss) { Text("关闭") }
@@ -320,27 +332,65 @@ private fun ModeEditor(mode: ReadingMode?, onSave: suspend (String, String) -> B
 }
 
 @Composable
-private fun SettingsPage(initial: ApiSettings, onSave: (ApiSettings) -> Unit, modifier: Modifier) {
+private fun SettingsPage(state: ReaderState, model: ReaderViewModel, modifier: Modifier) {
+    val initial = state.settings
     var baseUrl by remember(initial) { mutableStateOf(initial.baseUrl) }
-    var apiKey by remember(initial) { mutableStateOf(initial.apiKey) }
+    var newApiKey by remember(initial) { mutableStateOf("") }
+    var showApiKey by remember { mutableStateOf(false) }
+    var deleteApiKey by remember(initial) { mutableStateOf(false) }
     var modelId by remember(initial) { mutableStateOf(initial.modelId) }
     var temperature by remember(initial) { mutableStateOf(initial.temperature) }
     var maxTokens by remember(initial) { mutableStateOf(initial.maxOutputTokens) }
     var streaming by remember(initial) { mutableStateOf(initial.streaming) }
+    var sendTemperature by remember(initial) { mutableStateOf(initial.sendTemperature) }
+    var useMaxCompletionTokens by remember(initial) { mutableStateOf(initial.useMaxCompletionTokens) }
+    val draft = ApiSettings(baseUrl, modelId, temperature, maxTokens, streaming,
+        sendTemperature, useMaxCompletionTokens, initial.hasApiKey, initial.keyNeedsReentry)
+    val valid = maxTokens.toIntOrNull()?.let { it > 0 } == true &&
+        (!sendTemperature || temperature.toDoubleOrNull()?.let { it in 0.0..2.0 } == true)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("阅读文章会发送至您配置的第三方 API 服务，测试连接可能产生少量费用。",
+            style = MaterialTheme.typography.bodySmall)
         OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("API Base URL") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(apiKey, { apiKey = it }, label = { Text("API Key") },
-            visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+        Text(when {
+            initial.keyNeedsReentry -> "原有 API Key 无法解密，请重新输入。"
+            deleteApiKey -> "保存后将删除已配置的 API Key。"
+            initial.hasApiKey -> "API Key：已配置。留空可保留现有密钥。"
+            else -> "API Key：未配置。"
+        })
+        OutlinedTextField(newApiKey, { newApiKey = it; if (it.isNotEmpty()) deleteApiKey = false },
+            label = { Text("新 API Key（留空保留原值）") },
+            visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth())
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = { showApiKey = !showApiKey }) { Text(if (showApiKey) "隐藏密钥" else "显示密钥") }
+            if (initial.hasApiKey || initial.keyNeedsReentry) {
+                TextButton(onClick = { deleteApiKey = !deleteApiKey; if (deleteApiKey) newApiKey = "" }) {
+                    Text(if (deleteApiKey) "取消删除" else "删除现有密钥")
+                }
+            }
+        }
         OutlinedTextField(modelId, { modelId = it }, label = { Text("Model ID") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(temperature, { temperature = it }, label = { Text("Temperature") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(maxTokens, { maxTokens = it }, label = { Text("Max Output Tokens") }, modifier = Modifier.fillMaxWidth())
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("发送 Temperature 参数")
+            Switch(checked = sendTemperature, onCheckedChange = { sendTemperature = it })
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("使用 max_completion_tokens")
+            Switch(checked = useMaxCompletionTokens, onCheckedChange = { useMaxCompletionTokens = it })
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("流式输出")
             Switch(checked = streaming, onCheckedChange = { streaming = it })
         }
-        Button(onClick = { onSave(ApiSettings(baseUrl, apiKey, modelId, temperature, maxTokens, streaming)) },
-            enabled = temperature.toDoubleOrNull()?.let { it in 0.0..2.0 } == true &&
-                maxTokens.toIntOrNull()?.let { it > 0 } == true,
-            modifier = Modifier.fillMaxWidth()) { Text("保存设置") }
+        Button(onClick = { model.saveSettings(draft, newApiKey, deleteApiKey) }, enabled = valid,
+            modifier = Modifier.fillMaxWidth()) { Text("保存配置") }
+        OutlinedButton(onClick = { model.testConnection(draft, newApiKey, deleteApiKey) },
+            enabled = valid && !state.testingConnection, modifier = Modifier.fillMaxWidth()) {
+            Text(if (state.testingConnection) "正在测试连接…" else "测试连接")
+        }
+        state.settingsMessage?.let { Text(it) }
     }
 }
