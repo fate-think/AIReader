@@ -16,4 +16,4 @@ Kotlin、Jetpack Compose、Material 3、MVVM/StateFlow。minSdk 26，compileSdk/
 
 ## Wrapper 说明
 
-由于开发服务器无法访问 Gradle 下载站点，仓库内的 `gradle-wrapper.jar` 是可执行的自定义引导 JAR，并非 Gradle 官方发布的 Wrapper JAR。它在 GitHub Runner 上下载 Gradle 8.11.1 后启动构建。官方 Wrapper 的校验与实际 CI 构建仍需在联网环境完成；后续应使用官方 `gradle :wrapper --gradle-version 8.11.1` 替换引导文件。
+仓库内的 `gradle-wrapper.jar` 与 Gradle 官方发布的 Wrapper JAR SHA-256 校验值一致（`2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046`）。实际 CI 构建结果以 GitHub Actions 为准。
