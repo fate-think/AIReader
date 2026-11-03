@@ -6,7 +6,6 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -15,8 +14,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -98,7 +95,6 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel, modifier: Mod
     var showPreprocessSettings by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf<String?>(null) }
     val clipboard = LocalClipboardManager.current
-    val articleScrollState = rememberScrollState()
     val active = state.status == ReadingStatus.Loading || state.status == ReadingStatus.Streaming
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("阅读模式", style = MaterialTheme.typography.titleMedium)
@@ -118,31 +114,10 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel, modifier: Mod
                     onClick = { model.selectMode(mode.id); expanded = false }) }
             }
         }
-        Box(modifier = Modifier.fillMaxWidth()) {
-            OutlinedTextField(value = state.article, onValueChange = model::setArticle,
-                label = { Text("文章内容") }, placeholder = { Text("在这里粘贴文章") },
-                scrollState = articleScrollState,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp, max = 280.dp))
-            val scrollbarColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
-            if (state.article.isNotEmpty() && articleScrollState.maxValue > 0) {
-                Canvas(modifier = Modifier.matchParentSize()) {
-                    val topInset = 20.dp.toPx()
-                    val bottomInset = 12.dp.toPx()
-                    val trackHeight = (size.height - topInset - bottomInset).coerceAtLeast(0f)
-                    if (trackHeight > 0f) {
-                        val thumbHeight = (trackHeight * trackHeight /
-                            (trackHeight + articleScrollState.maxValue))
-                            .coerceIn(24.dp.toPx().coerceAtMost(trackHeight), trackHeight)
-                        val progress = (articleScrollState.value.toFloat() /
-                            articleScrollState.maxValue).coerceIn(0f, 1f)
-                        val thumbTop = topInset + (trackHeight - thumbHeight) * progress
-                        val x = size.width - 8.dp.toPx()
-                        drawLine(scrollbarColor, Offset(x, thumbTop),
-                            Offset(x, thumbTop + thumbHeight), 3.dp.toPx(), cap = StrokeCap.Round)
-                    }
-                }
-            }
-        }
+        OutlinedTextField(value = state.article, onValueChange = model::setArticle,
+            label = { Text("文章内容") }, placeholder = { Text("在这里粘贴文章") },
+            maxLines = 10,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp, max = 280.dp))
         Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
             Text("字符数：${state.article.length}")
             TextButton(onClick = model::clearArticle, enabled = state.article.isNotEmpty()) { Text("清空文章") }
