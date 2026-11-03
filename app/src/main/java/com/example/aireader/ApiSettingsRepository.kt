@@ -73,7 +73,18 @@ class ApiSettingsRepository(
             streaming = saved.optBoolean("streaming", true),
             sendTemperature = saved.optBoolean("sendTemperature", true),
             useMaxCompletionTokens = saved.optBoolean("useMaxCompletionTokens", false),
-            allowHttp = saved.optBoolean("allowHttp", false)
+            allowHttp = saved.optBoolean("allowHttp", false),
+            network = NetworkStabilitySettings(
+                autoRetry = saved.optBoolean("autoRetry", true),
+                maxRetries = saved.optInt("maxRetries", 2).coerceIn(0, 5),
+                connectTimeoutSeconds = saved.optInt("connectTimeoutSeconds", 20).coerceIn(10, 60),
+                readTimeoutSeconds = saved.optInt("readTimeoutSeconds", 180).coerceIn(30, 600),
+                retryHttp504 = saved.optBoolean("retryHttp504", false)
+            ),
+            reasoning = ReasoningSettings(
+                sendReasoningEffort = saved.optBoolean("sendReasoningEffort", false),
+                reasoningEffort = ReasoningEffort.fromApiValue(saved.optString("reasoningEffort", "max"))
+            )
         )
         val encrypted = preferences[secretKey].orEmpty()
         if (encrypted.isEmpty()) return LoadedApiSettings(config, null, false)
@@ -82,6 +93,7 @@ class ApiSettingsRepository(
     }
 
     suspend fun save(config: ApiConfig, newApiKey: String?, deleteApiKey: Boolean): LoadedApiSettings {
+        config.network.validate()
         val encryptedNewKey = newApiKey?.takeIf { it.isNotBlank() }
             ?.let { cipher.encrypt(ApiKeyNormalizer.normalize(it)) }
         val json = JSONObject()
@@ -90,6 +102,13 @@ class ApiSettingsRepository(
             .put("streaming", config.streaming).put("sendTemperature", config.sendTemperature)
             .put("useMaxCompletionTokens", config.useMaxCompletionTokens)
             .put("allowHttp", config.allowHttp)
+            .put("autoRetry", config.network.autoRetry)
+            .put("maxRetries", config.network.maxRetries)
+            .put("connectTimeoutSeconds", config.network.connectTimeoutSeconds)
+            .put("readTimeoutSeconds", config.network.readTimeoutSeconds)
+            .put("retryHttp504", config.network.retryHttp504)
+            .put("sendReasoningEffort", config.reasoning.sendReasoningEffort)
+            .put("reasoningEffort", config.reasoning.reasoningEffort.apiValue)
         dataStore.edit { preferences ->
             preferences[settingsKey] = json.toString()
             when {

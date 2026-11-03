@@ -40,6 +40,8 @@ class ApiSettingsRepositoryTest {
             assertTrue(defaults.config.streaming)
             assertTrue(defaults.config.sendTemperature)
             assertFalse(defaults.config.allowHttp)
+            assertEquals(NetworkStabilitySettings(), defaults.config.network)
+            assertEquals(ReasoningSettings(), defaults.config.reasoning)
 
             repo.save(ApiConfig(baseUrl = "https://example.com/v1", modelId = "model"),
                 "  secret-123\r\n", false)
@@ -107,6 +109,82 @@ class ApiSettingsRepositoryTest {
             assertTrue(loaded.config.sendTemperature)
             assertFalse(loaded.config.useMaxCompletionTokens)
             assertFalse(loaded.config.allowHttp)
+            assertEquals(NetworkStabilitySettings(), loaded.config.network)
+            assertEquals(ReasoningSettings(), loaded.config.reasoning)
+        } finally {
+            scope.coroutineContext[Job]!!.cancelAndJoin()
+            file.delete()
+        }
+    }
+
+    @Test fun networkSettingsPersistWithoutLosingExistingApiConfiguration() = runBlocking {
+        val file = File.createTempFile("aireader-network-", ".preferences_pb")
+        file.delete()
+        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        try {
+            val store = PreferenceDataStoreFactory.create(scope = scope, produceFile = { file })
+            val repo = ApiSettingsRepository(store, cipher)
+            val network = NetworkStabilitySettings(autoRetry = false, maxRetries = 5,
+                connectTimeoutSeconds = 60, readTimeoutSeconds = 600, retryHttp504 = true)
+            repo.save(ApiConfig(baseUrl = "https://example.com/v1", modelId = "kept-model",
+                temperature = 0.7, network = network), "secret", false)
+            val reopened = ApiSettingsRepository(store, cipher).load()
+            assertEquals(network, reopened.config.network)
+            assertEquals("kept-model", reopened.config.modelId)
+            assertEquals("https://example.com/v1", reopened.config.baseUrl)
+            assertEquals("secret", reopened.apiKey)
+        } finally {
+            scope.coroutineContext[Job]!!.cancelAndJoin()
+            file.delete()
+        }
+    }
+
+    @Test fun reasoningChoiceSurvivesDisabledSwitchAndReopening() = runBlocking {
+        val file = File.createTempFile("aireader-reasoning-", ".preferences_pb")
+        file.delete()
+        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        try {
+            val store = PreferenceDataStoreFactory.create(scope = scope, produceFile = { file })
+            val repo = ApiSettingsRepository(store, cipher)
+            val base = ApiConfig(baseUrl = "https://example.com/v1", modelId = "first-model",
+                temperature = 0.6, maxOutputTokens = 2048,
+                reasoning = ReasoningSettings(true, ReasoningEffort.HIGH))
+            repo.save(base, "saved-secret", false)
+            repo.save(base.copy(modelId = "second-model",
+                reasoning = ReasoningSettings(false, ReasoningEffort.HIGH)), null, false)
+            val reopened = ApiSettingsRepository(store, cipher).load()
+            assertEquals(ReasoningSettings(false, ReasoningEffort.HIGH), reopened.config.reasoning)
+            assertEquals("second-model", reopened.config.modelId)
+            assertEquals("https://example.com/v1", reopened.config.baseUrl)
+            assertEquals(0.6, reopened.config.temperature, 0.0)
+            assertEquals(2048, reopened.config.maxOutputTokens)
+            assertEquals("saved-secret", reopened.apiKey)
+            repo.save(reopened.config.copy(reasoning = reopened.config.reasoning.copy(
+                sendReasoningEffort = true)), null, false)
+            assertEquals(ReasoningEffort.HIGH, repo.load().config.reasoning.reasoningEffort)
+        } finally {
+            scope.coroutineContext[Job]!!.cancelAndJoin()
+            file.delete()
+        }
+    }
+
+    @Test fun invalidSavedReasoningValueFallsBackToMax() = runBlocking {
+        val file = File.createTempFile("aireader-reasoning-invalid-", ".preferences_pb")
+        file.delete()
+        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        try {
+            val store = PreferenceDataStoreFactory.create(scope = scope, produceFile = { file })
+            store.edit { preferences ->
+                preferences[stringPreferencesKey("settings")] = JSONObject()
+                    .put("baseUrl", "https://example.com/v1")
+                    .put("modelId", "old-model")
+                    .put("sendReasoningEffort", true)
+                    .put("reasoningEffort", "corrupt-value").toString()
+            }
+            val loaded = ApiSettingsRepository(store, cipher).load()
+            assertEquals(ReasoningEffort.MAX, loaded.config.reasoning.reasoningEffort)
+            assertTrue(loaded.config.reasoning.sendReasoningEffort)
+            assertEquals("old-model", loaded.config.modelId)
         } finally {
             scope.coroutineContext[Job]!!.cancelAndJoin()
             file.delete()

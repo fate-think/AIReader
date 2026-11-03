@@ -24,7 +24,11 @@ Kotlin、Jetpack Compose、Material 3、MVVM/StateFlow。minSdk 26，compileSdk/
 
 在“API 设置”填写 Base URL、API Key 和 Model ID；可调整 Temperature、最大输出 token、是否发送 Temperature、`max_tokens` 或 `max_completion_tokens`、流式输出。Base URL 默认只接受 HTTPS；如需 HTTP，明确开启“允许 HTTP Base URL”并保存。HTTP 会以明文传输 API Key 和文章内容。粘贴 API Key 时会自动去除首尾空白和换行；密钥中间若含换行则提示重新粘贴。留空新密钥并保存会保留已有密钥；删除密钥需要明确点击删除并保存。密钥丢失或设备迁移后无法解密时需重新输入。文章将发送至用户配置的第三方 API 服务。“测试连接”发送独立的“请只回复 OK。”短请求，并使用设置页当前的流式输出、最大输出 token 和 Temperature 参数设置；可能产生调用费用。若参考 curl 排查连接问题，请确保这些参数也一致。
 
+“思考深度”区域提供独立的“发送思考深度参数”开关和 Max、XHigh、High、Medium、Low、Minimal、None 七档。默认关闭发送、默认选择 Max。开启后，Chat Completions 请求 JSON 顶层添加所选的 `reasoning_effort` 原始值；关闭后完全省略该字段，但保留上次选中的档位。设置与其他 API 配置一起保存在 DataStore，切换 Model ID 不会重置它。测试连接使用当前选择，可能产生少量费用；服务端是否支持所选档位以实际响应为准。
+
 阅读页“开始阅读”会固定当前提示词、原文、预处理设置和 API 设置的快照，发送至 `/chat/completions`。流式内容按顺序追加；点击“停止生成”会取消请求并保留已生成文本。错误不会清空已有内容；可复制结果或重新生成。自动重定向已禁用。
+
+API 设置页的“网络稳定性”区域可调整自动重试、最大重试次数（0–5）、连接超时（10–60 秒）和读取空闲超时（30–600 秒）；默认分别为开启、2 次、20 秒和 180 秒。设置通过现有 DataStore 保存，旧配置获得默认值。临时 429、500、502、503 及确认未建立连接的失败可在尚未收到生成正文时按指数退避重试；配额不足、认证或参数错误、TLS 错误、读取超时和已开始输出的流不会自动重试。504 可能已由上游处理，默认提示手动重新生成；只有同时开启自动重试和“允许重试 504”才会有限重试，可能产生重复调用费用。服务端的 `Retry-After` 优先于指数退避；要求等待超过 60 秒时停止自动重试。等待重试时可取消。测试连接始终只发送一次请求。
 
 阅读报告支持标题、粗体、斜体、嵌套列表、引用、代码块、表格及用户点击的网页链接。宽表格可横向滚动。生成过程中先以纯文本显示增量内容，结束后渲染 Markdown；用户向上滚动时暂停自动跟随，可点击“回到底部”恢复。结果可复制、通过系统分享面板分享，或通过系统文件选择器保存为 UTF-8 Markdown 文件。清空结果前会确认。深色模式跟随系统。文章和报告默认不会自动写入文件或上传到其他服务。
 
@@ -32,7 +36,7 @@ Kotlin、Jetpack Compose、Material 3、MVVM/StateFlow。minSdk 26，compileSdk/
 
 ## 测试
 
-GitHub Actions 运行 `testDebugUnitTest`。提示词管理、预处理与设置测试继续保留；MockWebServer 测试覆盖 URL、单条 user 消息、参数、流式与普通响应、错误处理、取消及重定向。新增 Markdown 转 HTML、安全过滤、长文本、字号持久化及导出字节一致性测试。界面交互、WebView、浏览器兼容性、系统分享与文件选择器需要通过 GitHub Actions 构建 APK 后在真机验证。
+GitHub Actions 运行 `testDebugUnitTest`。提示词管理、预处理与设置测试继续保留；MockWebServer 测试覆盖 URL、单条 user 消息、参数、流式与普通响应、错误处理、取消及重定向。新增七档思考深度、发送开关、最终请求 JSON、设置迁移与持久化、服务端拒绝参数测试；网络超时、重试、504 专用开关、等待取消、请求快照和 HTML 导出测试继续保留。界面交互、WebView、浏览器兼容性、系统分享与文件选择器需要通过 GitHub Actions 构建 APK 后在真机验证。
 
 ## Wrapper 说明
 

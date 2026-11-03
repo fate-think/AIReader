@@ -139,7 +139,8 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
     val htmlExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/html")) {
         model.completeHtmlExport(it)
     }
-    val active = state.status == ReadingStatus.Loading || state.status == ReadingStatus.Streaming
+    val active = state.status in setOf(ReadingStatus.Loading, ReadingStatus.WaitingForRetry,
+        ReadingStatus.Retrying, ReadingStatus.Streaming)
     val htmlReady = state.status == ReadingStatus.Completed
     LaunchedEffect(state.status) {
         if (state.status == ReadingStatus.Loading) followResult = true
@@ -202,7 +203,7 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
         }
         Button(onClick = { if (active) model.stopReading() else { keyboard?.hide(); model.startReading() } },
             enabled = active || state.article.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
-            Text(if (active) "停止生成" else "开始阅读")
+            Text(if (state.status == ReadingStatus.WaitingForRetry) "取消重试" else if (active) "停止生成" else "开始阅读")
         }
         if (!active && state.status != ReadingStatus.Idle) {
             OutlinedButton(onClick = { keyboard?.hide(); model.startReading() }, enabled = state.article.isNotBlank(),
@@ -213,9 +214,13 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
         Text(when (state.status) {
             ReadingStatus.Idle -> "等待开始"
             ReadingStatus.Loading -> "正在连接…"
+            ReadingStatus.WaitingForRetry -> state.retryMessage ?: "等待重试…"
+            ReadingStatus.Retrying -> state.retryMessage ?: "正在重试…"
             ReadingStatus.Streaming -> "正在生成…"
             ReadingStatus.Completed -> "已完成"
             ReadingStatus.Cancelled -> "已停止"
+            ReadingStatus.Interrupted -> "生成中断"
+            ReadingStatus.RetryExhausted -> "重试次数已用尽"
             ReadingStatus.Error -> "请求失败"
         })
         if (active) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -500,10 +505,23 @@ private fun SettingsPage(state: ReaderState, model: ReaderViewModel, modifier: M
     var sendTemperature by remember(initial) { mutableStateOf(initial.sendTemperature) }
     var useMaxCompletionTokens by remember(initial) { mutableStateOf(initial.useMaxCompletionTokens) }
     var allowHttp by remember(initial) { mutableStateOf(initial.allowHttp) }
+    var autoRetry by remember(initial) { mutableStateOf(initial.autoRetry) }
+    var retryHttp504 by remember(initial) { mutableStateOf(initial.retryHttp504) }
+    var maxRetries by remember(initial) { mutableStateOf(initial.maxRetries) }
+    var connectTimeout by remember(initial) { mutableStateOf(initial.connectTimeoutSeconds) }
+    var readTimeout by remember(initial) { mutableStateOf(initial.readTimeoutSeconds) }
+    var sendReasoningEffort by remember(initial) { mutableStateOf(initial.sendReasoningEffort) }
+    var reasoningEffort by remember(initial) { mutableStateOf(initial.reasoningEffort) }
+    var reasoningExpanded by remember { mutableStateOf(false) }
     val draft = ApiSettings(baseUrl, modelId, temperature, maxTokens, streaming,
-        sendTemperature, useMaxCompletionTokens, allowHttp, initial.hasApiKey, initial.keyNeedsReentry)
+        sendTemperature, useMaxCompletionTokens, allowHttp, initial.hasApiKey, initial.keyNeedsReentry,
+        autoRetry, maxRetries, connectTimeout, readTimeout, retryHttp504,
+        sendReasoningEffort, reasoningEffort)
     val valid = maxTokens.toIntOrNull()?.let { it > 0 } == true &&
-        (!sendTemperature || temperature.toDoubleOrNull()?.let { it in 0.0..2.0 } == true)
+        (!sendTemperature || temperature.toDoubleOrNull()?.let { it in 0.0..2.0 } == true) &&
+        maxRetries.toIntOrNull()?.let { it in 0..5 } == true &&
+        connectTimeout.toIntOrNull()?.let { it in 10..60 } == true &&
+        readTimeout.toIntOrNull()?.let { it in 30..600 } == true
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("阅读文章会发送至您配置的第三方 API 服务。测试连接使用下方当前参数，可能产生调用费用。",
             style = MaterialTheme.typography.bodySmall)
@@ -549,6 +567,55 @@ private fun SettingsPage(state: ReaderState, model: ReaderViewModel, modifier: M
             Text("流式输出")
             Switch(checked = streaming, onCheckedChange = { streaming = it })
         }
+        HorizontalDivider()
+        Text("思考深度", style = MaterialTheme.typography.titleMedium)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("发送思考深度参数")
+            Switch(checked = sendReasoningEffort, onCheckedChange = { sendReasoningEffort = it })
+        }
+        Text("开启后，向 API 请求添加 reasoning_effort。关闭后不发送该参数，由模型服务端决定默认行为。",
+            style = MaterialTheme.typography.bodySmall)
+        Box {
+            OutlinedButton(onClick = { reasoningExpanded = true }, enabled = sendReasoningEffort,
+                modifier = Modifier.fillMaxWidth()) {
+                Text("思考深度：${reasoningEffort.displayName}")
+            }
+            DropdownMenu(expanded = reasoningExpanded && sendReasoningEffort,
+                onDismissRequest = { reasoningExpanded = false }) {
+                ReasoningEffort.entries.forEach { effort ->
+                    DropdownMenuItem(text = { Text(effort.displayName) }, onClick = {
+                        reasoningEffort = effort
+                        reasoningExpanded = false
+                    })
+                }
+            }
+        }
+        HorizontalDivider()
+        Text("网络稳定性", style = MaterialTheme.typography.titleMedium)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("自动重试")
+            Switch(checked = autoRetry, onCheckedChange = { autoRetry = it })
+        }
+        Text("仅针对符合条件的临时错误自动重试，可能产生额外 API 调用费用。",
+            style = MaterialTheme.typography.bodySmall)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("允许重试 504")
+            Switch(checked = retryHttp504, onCheckedChange = { retryHttp504 = it })
+        }
+        Text("504 网关超时不代表上游未执行；开启后可能重复请求和计费。总自动重试关闭时此项不生效。",
+            style = MaterialTheme.typography.bodySmall)
+        OutlinedTextField(maxRetries, { maxRetries = it }, label = { Text("最大重试次数（0–5）") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            isError = maxRetries.toIntOrNull()?.let { it in 0..5 } != true,
+            modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(connectTimeout, { connectTimeout = it }, label = { Text("连接超时（10–60 秒）") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            isError = connectTimeout.toIntOrNull()?.let { it in 10..60 } != true,
+            modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(readTimeout, { readTimeout = it }, label = { Text("读取超时（30–600 秒）") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            isError = readTimeout.toIntOrNull()?.let { it in 30..600 } != true,
+            modifier = Modifier.fillMaxWidth())
         Button(onClick = { model.saveSettings(draft, newApiKey, deleteApiKey) }, enabled = valid,
             modifier = Modifier.fillMaxWidth()) { Text("保存配置") }
         OutlinedButton(onClick = { model.testConnection(draft, newApiKey, deleteApiKey) },

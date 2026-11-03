@@ -20,7 +20,8 @@ import okhttp3.Call
 
 private val Context.dataStore by preferencesDataStore("reader_settings")
 
-enum class ReadingStatus { Idle, Loading, Streaming, Completed, Cancelled, Error }
+enum class ReadingStatus { Idle, Loading, WaitingForRetry, Retrying, Streaming, Completed,
+    Cancelled, Interrupted, RetryExhausted, Error }
 
 data class ApiSettings(
     val baseUrl: String = "",
@@ -32,7 +33,14 @@ data class ApiSettings(
     val useMaxCompletionTokens: Boolean = false,
     val allowHttp: Boolean = false,
     val hasApiKey: Boolean = false,
-    val keyNeedsReentry: Boolean = false
+    val keyNeedsReentry: Boolean = false,
+    val autoRetry: Boolean = true,
+    val maxRetries: String = "2",
+    val connectTimeoutSeconds: String = "20",
+    val readTimeoutSeconds: String = "180",
+    val retryHttp504: Boolean = false,
+    val sendReasoningEffort: Boolean = false,
+    val reasoningEffort: ReasoningEffort = ReasoningEffort.MAX
 )
 
 data class ReaderState(
@@ -44,6 +52,7 @@ data class ReaderState(
     val result: String = "",
     val status: ReadingStatus = ReadingStatus.Idle,
     val readingError: String? = null,
+    val retryMessage: String? = null,
     val settingsMessage: String? = null,
     val resultActionMessage: String? = null,
     val htmlFontSizePx: Int = 24,
@@ -117,7 +126,14 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         useMaxCompletionTokens = loaded.config.useMaxCompletionTokens,
         allowHttp = loaded.config.allowHttp,
         hasApiKey = !loaded.apiKey.isNullOrEmpty(),
-        keyNeedsReentry = loaded.requiresKeyReentry
+        keyNeedsReentry = loaded.requiresKeyReentry,
+        autoRetry = loaded.config.network.autoRetry,
+        maxRetries = loaded.config.network.maxRetries.toString(),
+        connectTimeoutSeconds = loaded.config.network.connectTimeoutSeconds.toString(),
+        readTimeoutSeconds = loaded.config.network.readTimeoutSeconds.toString(),
+        retryHttp504 = loaded.config.network.retryHttp504,
+        sendReasoningEffort = loaded.config.reasoning.sendReasoningEffort,
+        reasoningEffort = loaded.config.reasoning.reasoningEffort
     )
 
     private fun configFrom(settings: ApiSettings): ApiConfig {
@@ -130,9 +146,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             throw ApiException("Temperature 应在 0 到 2 之间。")
         }
         if (maxTokens <= 0) throw ApiException("Max Output Tokens 必须大于 0。")
+        val retries = settings.maxRetries.toIntOrNull()?.takeIf { it in 0..5 }
+            ?: throw ApiException("最大重试次数须为 0–5。")
+        val connect = settings.connectTimeoutSeconds.toIntOrNull()?.takeIf { it in 10..60 }
+            ?: throw ApiException("连接超时须为 10–60 秒。")
+        val read = settings.readTimeoutSeconds.toIntOrNull()?.takeIf { it in 30..600 }
+            ?: throw ApiException("读取超时须为 30–600 秒。")
         return ApiConfig(settings.baseUrl.trim(), settings.modelId.trim(), temperature, maxTokens,
             settings.streaming, settings.sendTemperature, settings.useMaxCompletionTokens,
-            settings.allowHttp)
+            settings.allowHttp, NetworkStabilitySettings(settings.autoRetry, retries, connect, read,
+                settings.retryHttp504), ReasoningSettings(settings.sendReasoningEffort,
+                settings.reasoningEffort))
     }
 
     fun clearStorageError() { _state.value = _state.value.copy(storageError = null) }
@@ -172,7 +196,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val generation = requestGeneration.next()
         accumulated = StringBuilder()
         _state.value = snapshot.copy(result = "", status = ReadingStatus.Loading,
-            readingError = null, resultActionMessage = null)
+            readingError = null, retryMessage = null, resultActionMessage = null)
         readingJob = viewModelScope.launch {
             var lastUpdate = 0L
             try {
@@ -185,23 +209,39 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                             accumulated.append(event.value)
                             val now = System.nanoTime()
                             if (now - lastUpdate >= 50_000_000L) {
-                                _state.value = _state.value.copy(result = accumulated.toString(), status = ReadingStatus.Streaming)
+                                _state.value = _state.value.copy(result = accumulated.toString(),
+                                    status = ReadingStatus.Streaming, retryMessage = null)
                                 lastUpdate = now
                             }
                         }
+                        is ReadingEvent.RetryWaiting -> _state.value = _state.value.copy(
+                            status = ReadingStatus.WaitingForRetry,
+                            retryMessage = "服务器繁忙，约 ${event.seconds} 秒后重试（第 ${event.attempt}/${event.maxRetries} 次）。")
+                        is ReadingEvent.Retrying -> _state.value = _state.value.copy(
+                            status = ReadingStatus.Retrying,
+                            retryMessage = "正在重试（第 ${event.attempt}/${event.maxRetries} 次）…")
+                        ReadingEvent.RetryExhausted -> _state.value = _state.value.copy(
+                            status = ReadingStatus.RetryExhausted, retryMessage = null)
                         ReadingEvent.Finished -> {
-                            _state.value = _state.value.copy(result = accumulated.toString(), status = ReadingStatus.Completed)
+                            _state.value = _state.value.copy(result = accumulated.toString(),
+                                status = ReadingStatus.Completed, retryMessage = null)
                         }
                     }
                 }
             } catch (cancelled: CancellationException) {
                 if (requestGeneration.isCurrent(generation)) {
-                    _state.value = _state.value.copy(result = accumulated.toString(), status = ReadingStatus.Cancelled)
+                    _state.value = _state.value.copy(result = accumulated.toString(),
+                        status = ReadingStatus.Cancelled, retryMessage = null)
                 }
             } catch (error: Exception) {
                 if (requestGeneration.isCurrent(generation)) {
-                    _state.value = _state.value.copy(result = accumulated.toString(), status = ReadingStatus.Error,
-                        readingError = ApiErrorMapper.message(error))
+                    val status = when {
+                        accumulated.isNotEmpty() -> ReadingStatus.Interrupted
+                        _state.value.status == ReadingStatus.RetryExhausted -> ReadingStatus.RetryExhausted
+                        else -> ReadingStatus.Error
+                    }
+                    _state.value = _state.value.copy(result = accumulated.toString(), status = status,
+                        retryMessage = null, readingError = ApiErrorMapper.message(error))
                 }
             } finally {
                 if (requestGeneration.isCurrent(generation)) {
@@ -224,7 +264,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         readingCall = null
         readingJob = null
         _state.value = _state.value.copy(result = accumulated.toString(), status = ReadingStatus.Cancelled,
-            readingError = null)
+            readingError = null, retryMessage = null)
     }
 
     fun clearResult() {
@@ -233,7 +273,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         accumulated = StringBuilder()
         cachedHtml = null
         _state.value = _state.value.copy(result = "", status = ReadingStatus.Idle,
-            readingError = null, resultActionMessage = null)
+            readingError = null, retryMessage = null, resultActionMessage = null)
     }
 
     fun prepareMarkdownExport(): Boolean {

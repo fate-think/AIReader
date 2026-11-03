@@ -33,7 +33,8 @@ class OpenAiCompatibleClientTest {
     @After fun tearDown() { server.shutdown() }
 
     private fun config(streaming: Boolean = false) = ApiConfig(
-        baseUrl = server.url("/proxy/custom/v1").toString(), modelId = "test-model", streaming = streaming)
+        baseUrl = server.url("/proxy/custom/v1").toString(), modelId = "test-model", streaming = streaming,
+        network = NetworkStabilitySettings(autoRetry = false))
 
     private fun response(text: String) = """{"choices":[{"message":{"content":"$text"}}]}"""
     private fun sse(text: String) = """data: {"choices":[{"delta":{"content":"$text"},"finish_reason":null}]}""" + "\n\n"
