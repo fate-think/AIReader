@@ -2,16 +2,20 @@ package com.example.aireader
 
 import android.app.Application
 import android.content.Context
+import android.net.Uri
+import androidx.core.content.FileProvider
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.Call
 
 private val Context.dataStore by preferencesDataStore("reader_settings")
@@ -41,6 +45,8 @@ data class ReaderState(
     val status: ReadingStatus = ReadingStatus.Idle,
     val readingError: String? = null,
     val settingsMessage: String? = null,
+    val resultActionMessage: String? = null,
+    val htmlFontSizePx: Int = 24,
     val testingConnection: Boolean = false,
     val storageError: String? = null,
     val loaded: Boolean = false
@@ -56,6 +62,8 @@ data class FinalRequestPreview(
 class ReaderViewModel(application: Application) : AndroidViewModel(application) {
     private val context = application.applicationContext
     private val preprocessSettings = PreprocessSettingsStore(context.dataStore)
+    private val htmlSettings = HtmlSettingsStore(context.dataStore)
+    private val htmlConverter = MarkdownHtmlConverter()
     private val promptRepository = PromptRepository(context.dataStore) { file ->
         context.assets.open("prompts/$file").bufferedReader(Charsets.UTF_8).use { it.readText() }
     }
@@ -70,6 +78,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     @Volatile private var testCall: Call? = null
     private val requestGeneration = RequestGeneration()
     private var accumulated = StringBuilder()
+    private var pendingExport: String? = null
+    private var pendingHtmlExport: String? = null
+    private var cachedHtml: Triple<String, Int, String>? = null
 
     init { viewModelScope.launch { load() } }
 
@@ -78,8 +89,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             val loadedSettings = apiSettingsRepository.load()
             apiKey = loadedSettings.apiKey
             val options = preprocessSettings.options.first()
+            val htmlFontSize = htmlSettings.fontSizePx.first()
             promptRepository.migrateIfNeeded()
-            _state.value = _state.value.copy(settings = toUiSettings(loadedSettings), preprocessOptions = options)
+            _state.value = _state.value.copy(settings = toUiSettings(loadedSettings), preprocessOptions = options,
+                htmlFontSizePx = htmlFontSize)
             promptRepository.catalogs.collect { catalog ->
                 _state.value = _state.value.copy(
                     modes = catalog.modes, selectedModeId = catalog.selectedModeId, loaded = true
@@ -158,7 +171,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
         val generation = requestGeneration.next()
         accumulated = StringBuilder()
-        _state.value = snapshot.copy(result = "", status = ReadingStatus.Loading, readingError = null)
+        _state.value = snapshot.copy(result = "", status = ReadingStatus.Loading,
+            readingError = null, resultActionMessage = null)
         readingJob = viewModelScope.launch {
             var lastUpdate = 0L
             try {
@@ -211,6 +225,127 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         readingJob = null
         _state.value = _state.value.copy(result = accumulated.toString(), status = ReadingStatus.Cancelled,
             readingError = null)
+    }
+
+    fun clearResult() {
+        if (readingJob?.isActive == true) return
+        requestGeneration.invalidate()
+        accumulated = StringBuilder()
+        cachedHtml = null
+        _state.value = _state.value.copy(result = "", status = ReadingStatus.Idle,
+            readingError = null, resultActionMessage = null)
+    }
+
+    fun prepareMarkdownExport(): Boolean {
+        val report = _state.value.result
+        if (report.isEmpty()) return false
+        pendingExport = report
+        _state.value = _state.value.copy(resultActionMessage = null)
+        return true
+    }
+
+    fun completeMarkdownExport(uri: Uri?) {
+        val report = pendingExport
+        pendingExport = null
+        if (uri == null) return
+        if (report == null) {
+            _state.value = _state.value.copy(resultActionMessage = "保存未完成，请重新选择文件。")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri, "wt")?.use {
+                        MarkdownExport.write(it, report)
+                    } ?: throw IllegalStateException("无法打开目标文件")
+                }
+                _state.value = _state.value.copy(resultActionMessage = "Markdown 文件已保存。")
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                _state.value = _state.value.copy(resultActionMessage = "保存失败，请重新选择位置。")
+            }
+        }
+    }
+
+    fun reportShareFailure() {
+        _state.value = _state.value.copy(resultActionMessage = "无法打开分享面板。")
+    }
+
+    fun setHtmlFontSize(value: Int) {
+        if (value !in 14..36) return
+        _state.value = _state.value.copy(htmlFontSizePx = value)
+        cachedHtml = null
+        viewModelScope.launch {
+            try { htmlSettings.saveFontSize(value) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                _state.value = _state.value.copy(resultActionMessage = "HTML 字体大小保存失败。")
+            }
+        }
+    }
+
+    suspend fun htmlForCurrentResult(fontSizePx: Int = _state.value.htmlFontSizePx): String? {
+        val snapshot = _state.value
+        if (snapshot.result.isEmpty() || snapshot.status != ReadingStatus.Completed) return null
+        cachedHtml?.takeIf { it.first == snapshot.result && it.second == fontSizePx }?.let { return it.third }
+        return withContext(Dispatchers.Default) {
+            htmlConverter.convert(snapshot.result, fontSizePx)
+        }.also { cachedHtml = Triple(snapshot.result, fontSizePx, it) }
+    }
+
+    suspend fun prepareHtmlExport(): Boolean {
+        return try {
+            val html = htmlForCurrentResult() ?: return false
+            pendingHtmlExport = html
+            _state.value = _state.value.copy(resultActionMessage = null)
+            true
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) {
+            _state.value = _state.value.copy(resultActionMessage = "HTML 生成失败。")
+            false
+        }
+    }
+
+    suspend fun browserHtmlUri(): Uri? {
+        return try {
+            val html = htmlForCurrentResult() ?: return null
+            withContext(Dispatchers.IO) {
+                val dir = java.io.File(context.cacheDir, "html_reports").apply { mkdirs() }
+                val file = java.io.File(dir, "AIReader-${java.util.UUID.randomUUID()}.html")
+                file.outputStream().use { HtmlExport.write(it, html) }
+                FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) {
+            _state.value = _state.value.copy(resultActionMessage = "无法准备浏览器文件，请使用 HTML 预览或保存 HTML。")
+            null
+        }
+    }
+
+    fun completeHtmlExport(uri: Uri?) {
+        val html = pendingHtmlExport
+        pendingHtmlExport = null
+        if (uri == null) return
+        if (html == null) {
+            _state.value = _state.value.copy(resultActionMessage = "保存未完成，请重新选择文件。")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri, "wt")?.use { HtmlExport.write(it, html) }
+                        ?: throw IllegalStateException("无法打开目标文件")
+                }
+                _state.value = _state.value.copy(resultActionMessage = "HTML 文件已保存。")
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                _state.value = _state.value.copy(resultActionMessage = "保存 HTML 失败，请重新选择位置。")
+            }
+        }
+    }
+
+    fun reportHtmlFailure(message: String) {
+        _state.value = _state.value.copy(resultActionMessage = message)
     }
 
     fun saveSettings(settings: ApiSettings, newKey: String, deleteKey: Boolean) {

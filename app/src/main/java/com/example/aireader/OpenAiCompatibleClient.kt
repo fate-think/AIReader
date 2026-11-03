@@ -90,7 +90,7 @@ class OpenAiCompatibleClient(
     }
 
     fun validate(config: ApiConfig, apiKey: String): HttpUrl {
-        if (apiKey.isBlank()) throw ApiException("请先配置 API Key。")
+        ApiKeyNormalizer.normalize(apiKey)
         if (config.modelId.isBlank()) throw ApiException("请先填写 Model ID。")
         if (config.maxOutputTokens <= 0) throw ApiException("Max Output Tokens 必须大于 0。")
         if (config.sendTemperature && (!config.temperature.isFinite() || config.temperature !in 0.0..2.0)) {
@@ -102,6 +102,7 @@ class OpenAiCompatibleClient(
     fun buildRequest(config: ApiConfig, apiKey: String, userMessage: String,
                      stream: Boolean = config.streaming): Request {
         val url = validate(config, apiKey)
+        val normalizedKey = ApiKeyNormalizer.normalize(apiKey)
         val body = JSONObject()
             .put("model", config.modelId)
             .put("messages", org.json.JSONArray().put(JSONObject().put("role", "user").put("content", userMessage)))
@@ -110,7 +111,7 @@ class OpenAiCompatibleClient(
         if (config.sendTemperature) body.put("temperature", config.temperature)
         return Request.Builder()
             .url(url)
-            .header("Authorization", "Bearer $apiKey")
+            .header("Authorization", "Bearer $normalizedKey")
             .header("Content-Type", "application/json")
             .post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
             .build()

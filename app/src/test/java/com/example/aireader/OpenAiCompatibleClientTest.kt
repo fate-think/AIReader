@@ -103,6 +103,15 @@ class OpenAiCompatibleClientTest {
         assertEquals(ReadingEvent.Finished, events.last())
     }
 
+    @Test fun longStreamingResponsePreservesEveryChunkExactlyOnce() = runBlocking {
+        val pieces = (1..120).map { "第${it}段。" }
+        val body = pieces.joinToString("") { sse(it) } + "data: [DONE]\n\n"
+        server.enqueue(MockResponse().setBody(body))
+        val actual = client.complete(config(streaming = true), key, "正文")
+            .filterIsInstance<ReadingEvent.Text>().toList().joinToString("") { it.value }
+        assertEquals(pieces.joinToString(""), actual)
+    }
+
     @Test fun sseWorksAcrossNetworkChunkBoundaries() = runBlocking {
         val body = sse("中文") + "data: [DONE]\n\n"
         server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream")
@@ -231,6 +240,21 @@ class OpenAiCompatibleClientTest {
         assertEquals(128, json.getInt("max_completion_tokens"))
         assertFalse(json.has("max_tokens"))
         assertEquals(0.3, json.getDouble("temperature"), 0.0)
+    }
+
+    @Test fun pastedKeyWithSurroundingWhitespaceWorksBeforeSaving() = runBlocking {
+        server.enqueue(MockResponse().setBody(response("OK")))
+        client.testConnection(config(), "  $key\r\n")
+        assertEquals("Bearer $key", server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test fun embeddedNewlineInKeyIsRejectedWithoutLeakingIt() {
+        val invalidKey = "first\nsecond"
+        val error = runCatching { client.buildRequest(config(), invalidKey, "正文") }.exceptionOrNull()
+        assertTrue(error is ApiException)
+        val message = ApiErrorMapper.message(error!!)
+        assertTrue(message.contains("换行"))
+        assertFalse(message.contains(invalidKey))
     }
 
     @Test fun keyIsOnlyInAuthorizationHeaderAndNeverInErrorText() {

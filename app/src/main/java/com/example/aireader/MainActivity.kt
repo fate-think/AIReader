@@ -1,20 +1,28 @@
 package com.example.aireader
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -23,17 +31,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge(statusBarStyle = SystemBarStyle.light(
+        enableEdgeToEdge(statusBarStyle = SystemBarStyle.auto(
             android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT))
         setContent {
             val model: ReaderViewModel = viewModel()
             val state by model.state.collectAsStateWithLifecycle()
-            MaterialTheme { App(state, model) }
+            MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+                App(state, model)
+            }
         }
     }
 }
@@ -43,7 +54,24 @@ private fun App(state: ReaderState, model: ReaderViewModel) {
     var page by rememberSaveable { mutableStateOf(0) }
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     var creating by rememberSaveable { mutableStateOf(false) }
+    var htmlPreview by remember { mutableStateOf<String?>(null) }
+    val appScope = rememberCoroutineScope()
+    htmlPreview?.let { html ->
+        HtmlPreview(html, state.htmlFontSizePx, onFontSizeChange = { size ->
+            model.setHtmlFontSize(size)
+            appScope.launch {
+                try {
+                    model.htmlForCurrentResult(size)?.let {
+                        if (htmlPreview != null && model.state.value.htmlFontSizePx == size) htmlPreview = it
+                    }
+                }
+                catch (_: Exception) { model.reportHtmlFailure("HTML 预览刷新失败。") }
+            }
+        }, onClose = { htmlPreview = null })
+        return
+    }
     Scaffold(
+        modifier = Modifier.imePadding(),
         topBar = { Surface(
             modifier = Modifier.fillMaxWidth(),
             color = MaterialTheme.colorScheme.surface,
@@ -76,7 +104,7 @@ private fun App(state: ReaderState, model: ReaderViewModel) {
                     { model.deleteMode(mode.id); editingId = null }
                 },
                 modifier = modifier)
-            page == 0 -> ReaderPage(state, model, modifier)
+            page == 0 -> ReaderPage(state, model, onHtmlPreview = { htmlPreview = it }, modifier = modifier)
             page == 1 -> ModesPage(state, model, onEdit = { editingId = it },
                 onAdd = { creating = true }, modifier = modifier)
             else -> SettingsPage(state, model, modifier)
@@ -90,14 +118,52 @@ private fun App(state: ReaderState, model: ReaderViewModel) {
 }
 
 @Composable
-private fun ReaderPage(state: ReaderState, model: ReaderViewModel, modifier: Modifier) {
+private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
+                       onHtmlPreview: (String) -> Unit, modifier: Modifier) {
     var expanded by remember { mutableStateOf(false) }
     var showPreprocessSettings by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf<String?>(null) }
     val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val resultScroll = rememberLazyListState()
+    val userDraggingResult by resultScroll.interactionSource.collectIsDraggedAsState()
+    var followResult by remember { mutableStateOf(true) }
+    var confirmClearResult by remember { mutableStateOf(false) }
+    var moreActions by remember { mutableStateOf(false) }
+    var htmlBusy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/markdown")) {
+        model.completeMarkdownExport(it)
+    }
+    val htmlExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/html")) {
+        model.completeHtmlExport(it)
+    }
     val active = state.status == ReadingStatus.Loading || state.status == ReadingStatus.Streaming
+    val htmlReady = state.status == ReadingStatus.Completed
+    LaunchedEffect(state.status) {
+        if (state.status == ReadingStatus.Loading) followResult = true
+    }
+    LaunchedEffect(userDraggingResult, resultScroll) {
+        if (userDraggingResult) {
+            snapshotFlow {
+                val info = resultScroll.layoutInfo
+                val last = info.visibleItemsInfo.lastOrNull()
+                last != null && last.index == info.totalItemsCount - 1 &&
+                    last.offset + last.size <= info.viewportEndOffset + 8
+            }.collect { followResult = it }
+        }
+    }
+    LaunchedEffect(state.result, active, followResult) {
+        if (active && followResult && state.result.isNotEmpty()) {
+            val lastChunk = MarkdownDocument.streamingChunks(state.result).lastIndex
+            resultScroll.scrollToItem(lastChunk, 100_000)
+        }
+    }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("阅读模式", style = MaterialTheme.typography.titleMedium)
+        Text("当前模型：${state.settings.modelId.ifBlank { "未配置" }}",
+            style = MaterialTheme.typography.bodySmall)
         Box {
             OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
                 Text(state.modes.firstOrNull { it.id == state.selectedModeId }?.name ?: "选择阅读模式")
@@ -134,12 +200,12 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel, modifier: Mod
             enabled = state.article.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
             Text("预览最终发送内容")
         }
-        Button(onClick = { if (active) model.stopReading() else model.startReading() },
+        Button(onClick = { if (active) model.stopReading() else { keyboard?.hide(); model.startReading() } },
             enabled = active || state.article.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
             Text(if (active) "停止生成" else "开始阅读")
         }
         if (!active && state.status != ReadingStatus.Idle) {
-            OutlinedButton(onClick = model::startReading, enabled = state.article.isNotBlank(),
+            OutlinedButton(onClick = { keyboard?.hide(); model.startReading() }, enabled = state.article.isNotBlank(),
                 modifier = Modifier.fillMaxWidth()) { Text("重新生成") }
         }
         HorizontalDivider()
@@ -155,8 +221,84 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel, modifier: Mod
         if (active) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         state.readingError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (state.result.isNotEmpty()) {
-            MarkdownResult(state.result)
-            TextButton(onClick = { clipboard.setText(AnnotatedString(state.result)) }) { Text("复制结果") }
+            if (active && !followResult) {
+                TextButton(onClick = { followResult = true }) { Text("回到底部") }
+            }
+            Box(Modifier.fillMaxWidth().height(360.dp)) {
+                MarkdownResult(state.result, resultScroll, streaming = active)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { clipboard.setText(AnnotatedString(state.result)) },
+                    modifier = Modifier.weight(1f)) { Text("复制 Markdown") }
+                Box(Modifier.weight(1f)) {
+                    OutlinedButton(onClick = { moreActions = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text("更多操作")
+                    }
+                    DropdownMenu(expanded = moreActions, onDismissRequest = { moreActions = false }) {
+                        DropdownMenuItem(text = { Text("HTML 预览") }, enabled = htmlReady && !htmlBusy,
+                            onClick = {
+                                moreActions = false; htmlBusy = true
+                                scope.launch {
+                                    try { model.htmlForCurrentResult()?.let(onHtmlPreview) }
+                                    catch (_: Exception) { model.reportHtmlFailure("HTML 预览生成失败。") }
+                                    finally { htmlBusy = false }
+                                }
+                            })
+                        DropdownMenuItem(text = { Text("浏览器打开") }, enabled = htmlReady && !htmlBusy,
+                            onClick = {
+                                moreActions = false; htmlBusy = true
+                                scope.launch {
+                                    try {
+                                        model.browserHtmlUri()?.let { uri ->
+                                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                                setDataAndType(uri, "text/html")
+                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            }
+                                            try { context.startActivity(intent) }
+                                            catch (_: Exception) {
+                                                model.reportHtmlFailure("浏览器可能不支持直接打开此文件。可使用 HTML 预览，或保存 HTML 后用支持本地文件的浏览器打开。")
+                                            }
+                                        }
+                                    } finally { htmlBusy = false }
+                                }
+                            })
+                        DropdownMenuItem(text = { Text("保存 HTML") }, enabled = htmlReady && !htmlBusy,
+                            onClick = {
+                                moreActions = false; htmlBusy = true
+                                scope.launch {
+                                    try {
+                                        if (model.prepareHtmlExport()) htmlExportLauncher.launch("AIReader-阅读报告.html")
+                                    } finally { htmlBusy = false }
+                                }
+                            })
+                        HorizontalDivider()
+                        DropdownMenuItem(text = { Text("分享结果") }, onClick = {
+                            moreActions = false
+                            val send = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, state.result)
+                            }
+                            try { context.startActivity(Intent.createChooser(send, "分享阅读结果")) }
+                            catch (_: Exception) { model.reportShareFailure() }
+                        })
+                        DropdownMenuItem(text = { Text("保存 Markdown") }, onClick = {
+                            moreActions = false
+                            if (model.prepareMarkdownExport()) exportLauncher.launch("AIReader-report.md")
+                        })
+                        DropdownMenuItem(text = { Text("清空结果") }, enabled = !active,
+                            onClick = { moreActions = false; confirmClearResult = true })
+                    }
+                }
+            }
+            if (htmlBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            Text("HTML 阅读字号：${state.htmlFontSizePx}px", style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { model.setHtmlFontSize(state.htmlFontSizePx - 1) },
+                    enabled = state.htmlFontSizePx > 14) { Text("A−") }
+                OutlinedButton(onClick = { model.setHtmlFontSize(state.htmlFontSizePx + 1) },
+                    enabled = state.htmlFontSizePx < 36) { Text("A+") }
+            }
+            state.resultActionMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
         finalPreview?.let { request ->
             FinalRequestPreviewDialog(request, onDismiss = { finalPreview = null })
@@ -168,6 +310,9 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel, modifier: Mod
     preview?.let { processed ->
         PreviewDialog(processed, state.article.length, onDismiss = { preview = null })
     }
+    if (confirmClearResult) ConfirmModeActionDialog("清空阅读结果？", "这会清除当前报告，不影响文章和提示词。",
+        onConfirm = { model.clearResult(); confirmClearResult = false },
+        onDismiss = { confirmClearResult = false })
 }
 
 @Composable

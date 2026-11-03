@@ -41,10 +41,12 @@ class ApiSettingsRepositoryTest {
             assertTrue(defaults.config.sendTemperature)
             assertFalse(defaults.config.allowHttp)
 
-            repo.save(ApiConfig(baseUrl = "https://example.com/v1", modelId = "model"), "secret-123", false)
+            repo.save(ApiConfig(baseUrl = "https://example.com/v1", modelId = "model"),
+                "  secret-123\r\n", false)
             val preferences = store.data.first()
             assertFalse(preferences[stringPreferencesKey("settings")].orEmpty().contains("secret-123"))
             assertFalse(preferences[stringPreferencesKey("api_key_encrypted")].orEmpty().contains("secret-123"))
+            assertEquals("secret-123", cipher.decrypt(preferences[stringPreferencesKey("api_key_encrypted")]!!))
             assertEquals("secret-123", repo.load().apiKey)
 
             repo.save(ApiConfig(baseUrl = "https://example.com/custom", modelId = "model-2"), null, false)
@@ -94,8 +96,10 @@ class ApiSettingsRepositoryTest {
                     .put("temperature", "0.7")
                     .put("maxOutputTokens", "2048")
                     .put("streaming", false).toString()
+                preferences[stringPreferencesKey("api_key_encrypted")] = cipher.encrypt("legacy-secret\n")
             }
             val loaded = ApiSettingsRepository(store, cipher).load()
+            assertEquals("legacy-secret", loaded.apiKey)
             assertEquals("old-model", loaded.config.modelId)
             assertEquals(0.7, loaded.config.temperature, 0.0)
             assertEquals(2048, loaded.config.maxOutputTokens)

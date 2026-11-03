@@ -77,12 +77,13 @@ class ApiSettingsRepository(
         )
         val encrypted = preferences[secretKey].orEmpty()
         if (encrypted.isEmpty()) return LoadedApiSettings(config, null, false)
-        return try { LoadedApiSettings(config, cipher.decrypt(encrypted), false) }
+        return try { LoadedApiSettings(config, ApiKeyNormalizer.normalize(cipher.decrypt(encrypted)), false) }
         catch (_: Exception) { LoadedApiSettings(config, null, true) }
     }
 
     suspend fun save(config: ApiConfig, newApiKey: String?, deleteApiKey: Boolean): LoadedApiSettings {
-        val encryptedNewKey = newApiKey?.takeIf { it.isNotBlank() }?.let { cipher.encrypt(it) }
+        val encryptedNewKey = newApiKey?.takeIf { it.isNotBlank() }
+            ?.let { cipher.encrypt(ApiKeyNormalizer.normalize(it)) }
         val json = JSONObject()
             .put("baseUrl", config.baseUrl).put("modelId", config.modelId)
             .put("temperature", config.temperature).put("maxOutputTokens", config.maxOutputTokens)
