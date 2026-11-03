@@ -207,16 +207,30 @@ class OpenAiCompatibleClientTest {
         assertTrue(ApiErrorMapper.httpStatus(502).contains("暂时不可用"))
     }
 
-    @Test fun connectionTestUsesIndependentShortMessage() = runBlocking {
-        server.enqueue(MockResponse().setBody(response("OK")))
-        client.testConnection(config(streaming = true), key)
+    @Test fun connectionTestUsesIndependentShortMessageAndSelectedRequestSettings() = runBlocking {
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream")
+            .setBody(sse("OK") + "data: [DONE]\n\n"))
+        client.testConnection(config(streaming = true).copy(sendTemperature = false,
+            maxOutputTokens = 4096), key)
         val recorded = server.takeRequest()
         val json = JSONObject(recorded.body.readUtf8())
         assertEquals("请只回复 OK。", json.getJSONArray("messages").getJSONObject(0).getString("content"))
         assertEquals("test-model", json.getString("model"))
         assertEquals("Bearer $key", recorded.getHeader("Authorization"))
+        assertTrue(json.getBoolean("stream"))
+        assertEquals(4096, json.getInt("max_tokens"))
+        assertFalse(json.has("temperature"))
+    }
+
+    @Test fun connectionTestAlsoSupportsNonStreamingAndSelectedTokenField() = runBlocking {
+        server.enqueue(MockResponse().setBody(response("OK")))
+        client.testConnection(config().copy(useMaxCompletionTokens = true,
+            maxOutputTokens = 128), key)
+        val json = JSONObject(server.takeRequest().body.readUtf8())
         assertFalse(json.getBoolean("stream"))
-        assertEquals(16, json.getInt("max_tokens"))
+        assertEquals(128, json.getInt("max_completion_tokens"))
+        assertFalse(json.has("max_tokens"))
+        assertEquals(0.3, json.getDouble("temperature"), 0.0)
     }
 
     @Test fun keyIsOnlyInAuthorizationHeaderAndNeverInErrorText() {
@@ -240,9 +254,31 @@ class OpenAiCompatibleClientTest {
         } finally { other.shutdown() }
     }
 
-    @Test fun httpIsRejectedUnlessExplicitlyAllowedForTests() {
+    @Test fun httpIsRejectedByDefault() {
         val production = OpenAiCompatibleClient()
         val error = runCatching { production.endpoint(server.url("/v1").toString()) }.exceptionOrNull()
         assertTrue(ApiErrorMapper.message(error!!).contains("HTTPS"))
+    }
+
+    @Test fun httpRequiresOptInAndHttpsWorksRegardlessOfSetting() {
+        val production = OpenAiCompatibleClient()
+        val httpUrl = server.url("/v1").toString()
+        val rejected = runCatching {
+            production.buildRequest(config().copy(allowHttp = false), key, "正文")
+        }.exceptionOrNull()
+        assertTrue(rejected is ApiException)
+        assertEquals("http", production.buildRequest(config().copy(allowHttp = true), key, "正文").url.scheme)
+        assertEquals("/v1/chat/completions", production.endpoint(httpUrl, allowHttp = true).encodedPath)
+
+        val https = ApiConfig(baseUrl = "https://example.com/v1", modelId = "test-model")
+        assertEquals("https", production.buildRequest(https, key, "正文").url.scheme)
+        assertEquals("https", production.buildRequest(https.copy(allowHttp = true), key, "正文").url.scheme)
+    }
+
+    @Test fun optedInHttpWorksForConnectionTest() = runBlocking {
+        server.enqueue(MockResponse().setBody(response("OK")))
+        val production = OpenAiCompatibleClient()
+        production.testConnection(config().copy(allowHttp = true), key)
+        assertEquals("/proxy/custom/v1/chat/completions", server.takeRequest().path)
     }
 }

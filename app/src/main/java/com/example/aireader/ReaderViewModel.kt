@@ -26,6 +26,7 @@ data class ApiSettings(
     val streaming: Boolean = true,
     val sendTemperature: Boolean = true,
     val useMaxCompletionTokens: Boolean = false,
+    val allowHttp: Boolean = false,
     val hasApiKey: Boolean = false,
     val keyNeedsReentry: Boolean = false
 )
@@ -101,6 +102,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         streaming = loaded.config.streaming,
         sendTemperature = loaded.config.sendTemperature,
         useMaxCompletionTokens = loaded.config.useMaxCompletionTokens,
+        allowHttp = loaded.config.allowHttp,
         hasApiKey = !loaded.apiKey.isNullOrEmpty(),
         keyNeedsReentry = loaded.requiresKeyReentry
     )
@@ -116,7 +118,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
         if (maxTokens <= 0) throw ApiException("Max Output Tokens 必须大于 0。")
         return ApiConfig(settings.baseUrl.trim(), settings.modelId.trim(), temperature, maxTokens,
-            settings.streaming, settings.sendTemperature, settings.useMaxCompletionTokens)
+            settings.streaming, settings.sendTemperature, settings.useMaxCompletionTokens,
+            settings.allowHttp)
     }
 
     fun clearStorageError() { _state.value = _state.value.copy(storageError = null) }

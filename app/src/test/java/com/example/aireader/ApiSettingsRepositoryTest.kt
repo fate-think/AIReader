@@ -39,6 +39,7 @@ class ApiSettingsRepositoryTest {
             assertEquals(4096, defaults.config.maxOutputTokens)
             assertTrue(defaults.config.streaming)
             assertTrue(defaults.config.sendTemperature)
+            assertFalse(defaults.config.allowHttp)
 
             repo.save(ApiConfig(baseUrl = "https://example.com/v1", modelId = "model"), "secret-123", false)
             val preferences = store.data.first()
@@ -48,6 +49,8 @@ class ApiSettingsRepositoryTest {
 
             repo.save(ApiConfig(baseUrl = "https://example.com/custom", modelId = "model-2"), null, false)
             assertEquals("secret-123", repo.load().apiKey)
+            repo.save(ApiConfig(baseUrl = "http://example.com/v1", modelId = "model-2", allowHttp = true), null, false)
+            assertTrue(ApiSettingsRepository(store, cipher).load().config.allowHttp)
             repo.save(ApiConfig(), null, true)
             assertNull(repo.load().apiKey)
         } finally {
@@ -99,6 +102,7 @@ class ApiSettingsRepositoryTest {
             assertFalse(loaded.config.streaming)
             assertTrue(loaded.config.sendTemperature)
             assertFalse(loaded.config.useMaxCompletionTokens)
+            assertFalse(loaded.config.allowHttp)
         } finally {
             scope.coroutineContext[Job]!!.cancelAndJoin()
             file.delete()

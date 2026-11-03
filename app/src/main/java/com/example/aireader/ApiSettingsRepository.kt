@@ -72,7 +72,8 @@ class ApiSettingsRepository(
             maxOutputTokens = saved.optString("maxOutputTokens", "4096").toIntOrNull() ?: 4096,
             streaming = saved.optBoolean("streaming", true),
             sendTemperature = saved.optBoolean("sendTemperature", true),
-            useMaxCompletionTokens = saved.optBoolean("useMaxCompletionTokens", false)
+            useMaxCompletionTokens = saved.optBoolean("useMaxCompletionTokens", false),
+            allowHttp = saved.optBoolean("allowHttp", false)
         )
         val encrypted = preferences[secretKey].orEmpty()
         if (encrypted.isEmpty()) return LoadedApiSettings(config, null, false)
@@ -87,6 +88,7 @@ class ApiSettingsRepository(
             .put("temperature", config.temperature).put("maxOutputTokens", config.maxOutputTokens)
             .put("streaming", config.streaming).put("sendTemperature", config.sendTemperature)
             .put("useMaxCompletionTokens", config.useMaxCompletionTokens)
+            .put("allowHttp", config.allowHttp)
         dataStore.edit { preferences ->
             preferences[settingsKey] = json.toString()
             when {

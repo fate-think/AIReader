@@ -28,7 +28,8 @@ data class ApiConfig(
     val maxOutputTokens: Int = 4096,
     val streaming: Boolean = true,
     val sendTemperature: Boolean = true,
-    val useMaxCompletionTokens: Boolean = false
+    val useMaxCompletionTokens: Boolean = false,
+    val allowHttp: Boolean = false
 )
 
 sealed interface ReadingEvent {
@@ -74,11 +75,11 @@ class OpenAiCompatibleClient(
     private val http = client.newBuilder().followRedirects(false).followSslRedirects(false)
         .retryOnConnectionFailure(false).build()
 
-    fun endpoint(baseUrl: String): HttpUrl {
+    fun endpoint(baseUrl: String, allowHttp: Boolean = false): HttpUrl {
         val url = baseUrl.trim().toHttpUrlOrNull()
             ?: throw ApiException("API Base URL 无效。")
-        if (url.scheme != "https" && !(allowHttpForTests && url.scheme == "http")) {
-            throw ApiException("API Base URL 必须使用 HTTPS。")
+        if (url.scheme != "https" && !(url.scheme == "http" && (allowHttp || allowHttpForTests))) {
+            throw ApiException("API Base URL 必须使用 HTTPS；如需 HTTP，请在 API 设置中开启允许 HTTP Base URL。")
         }
         if (url.username.isNotEmpty() || url.password.isNotEmpty()) {
             throw ApiException("API Base URL 不能包含账号信息。")
@@ -95,7 +96,7 @@ class OpenAiCompatibleClient(
         if (config.sendTemperature && (!config.temperature.isFinite() || config.temperature !in 0.0..2.0)) {
             throw ApiException("Temperature 应在 0 到 2 之间。")
         }
-        return endpoint(config.baseUrl)
+        return endpoint(config.baseUrl, config.allowHttp)
     }
 
     fun buildRequest(config: ApiConfig, apiKey: String, userMessage: String,
@@ -160,8 +161,7 @@ class OpenAiCompatibleClient(
 
     suspend fun testConnection(config: ApiConfig, apiKey: String, onCallCreated: (Call) -> Unit = {}) {
         var receivedText = false
-        complete(config.copy(streaming = false, maxOutputTokens = minOf(config.maxOutputTokens, 16)),
-            apiKey, "请只回复 OK。", onCallCreated).collect { event ->
+        complete(config, apiKey, "请只回复 OK。", onCallCreated).collect { event ->
             if (event is ReadingEvent.Text && event.value.isNotEmpty()) receivedText = true
         }
         if (!receivedText) throw ApiException("测试连接未收到有效内容。")

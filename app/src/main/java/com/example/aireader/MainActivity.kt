@@ -2,8 +2,11 @@ package com.example.aireader
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -12,6 +15,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -26,6 +31,8 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge(statusBarStyle = SystemBarStyle.light(
+            android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT))
         setContent {
             val model: ReaderViewModel = viewModel()
             val state by model.state.collectAsStateWithLifecycle()
@@ -40,9 +47,14 @@ private fun App(state: ReaderState, model: ReaderViewModel) {
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     var creating by rememberSaveable { mutableStateOf(false) }
     Scaffold(
-        topBar = { Surface(shadowElevation = 2.dp) {
+        topBar = { Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 2.dp
+        ) {
             Text(when { creating || editingId != null -> "编辑阅读模式"; page == 0 -> "AI 阅读助手"; page == 1 -> "提示词管理"; else -> "API 设置" },
-                style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(20.dp))
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.statusBarsPadding().padding(20.dp))
         } },
         bottomBar = { if (!creating && editingId == null) NavigationBar {
             listOf("阅读", "提示词", "设置").forEachIndexed { index, label ->
@@ -86,6 +98,7 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel, modifier: Mod
     var showPreprocessSettings by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf<String?>(null) }
     val clipboard = LocalClipboardManager.current
+    val articleScrollState = rememberScrollState()
     val active = state.status == ReadingStatus.Loading || state.status == ReadingStatus.Streaming
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("阅读模式", style = MaterialTheme.typography.titleMedium)
@@ -105,9 +118,31 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel, modifier: Mod
                     onClick = { model.selectMode(mode.id); expanded = false }) }
             }
         }
-        OutlinedTextField(value = state.article, onValueChange = model::setArticle,
-            label = { Text("文章内容") }, placeholder = { Text("在这里粘贴文章") },
-            modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp))
+        Box(modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(value = state.article, onValueChange = model::setArticle,
+                label = { Text("文章内容") }, placeholder = { Text("在这里粘贴文章") },
+                scrollState = articleScrollState,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp, max = 280.dp))
+            val scrollbarColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+            if (state.article.isNotEmpty() && articleScrollState.maxValue > 0) {
+                Canvas(modifier = Modifier.matchParentSize()) {
+                    val topInset = 20.dp.toPx()
+                    val bottomInset = 12.dp.toPx()
+                    val trackHeight = (size.height - topInset - bottomInset).coerceAtLeast(0f)
+                    if (trackHeight > 0f) {
+                        val thumbHeight = (trackHeight * trackHeight /
+                            (trackHeight + articleScrollState.maxValue))
+                            .coerceIn(24.dp.toPx().coerceAtMost(trackHeight), trackHeight)
+                        val progress = (articleScrollState.value.toFloat() /
+                            articleScrollState.maxValue).coerceIn(0f, 1f)
+                        val thumbTop = topInset + (trackHeight - thumbHeight) * progress
+                        val x = size.width - 8.dp.toPx()
+                        drawLine(scrollbarColor, Offset(x, thumbTop),
+                            Offset(x, thumbTop + thumbHeight), 3.dp.toPx(), cap = StrokeCap.Round)
+                    }
+                }
+            }
+        }
         Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
             Text("字符数：${state.article.length}")
             TextButton(onClick = model::clearArticle, enabled = state.article.isNotEmpty()) { Text("清空文章") }
@@ -344,14 +379,23 @@ private fun SettingsPage(state: ReaderState, model: ReaderViewModel, modifier: M
     var streaming by remember(initial) { mutableStateOf(initial.streaming) }
     var sendTemperature by remember(initial) { mutableStateOf(initial.sendTemperature) }
     var useMaxCompletionTokens by remember(initial) { mutableStateOf(initial.useMaxCompletionTokens) }
+    var allowHttp by remember(initial) { mutableStateOf(initial.allowHttp) }
     val draft = ApiSettings(baseUrl, modelId, temperature, maxTokens, streaming,
-        sendTemperature, useMaxCompletionTokens, initial.hasApiKey, initial.keyNeedsReentry)
+        sendTemperature, useMaxCompletionTokens, allowHttp, initial.hasApiKey, initial.keyNeedsReentry)
     val valid = maxTokens.toIntOrNull()?.let { it > 0 } == true &&
         (!sendTemperature || temperature.toDoubleOrNull()?.let { it in 0.0..2.0 } == true)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("阅读文章会发送至您配置的第三方 API 服务，测试连接可能产生少量费用。",
+        Text("阅读文章会发送至您配置的第三方 API 服务。测试连接使用下方当前参数，可能产生调用费用。",
             style = MaterialTheme.typography.bodySmall)
         OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("API Base URL") }, modifier = Modifier.fillMaxWidth())
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("允许 HTTP Base URL")
+            Switch(checked = allowHttp, onCheckedChange = { allowHttp = it })
+        }
+        if (allowHttp) {
+            Text("HTTP 会以明文传输 API Key 和文章内容，请仅在信任该连接时使用。",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
         Text(when {
             initial.keyNeedsReentry -> "原有 API Key 无法解密，请重新输入。"
             deleteApiKey -> "保存后将删除已配置的 API Key。"
