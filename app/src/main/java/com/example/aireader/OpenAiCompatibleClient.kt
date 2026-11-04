@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import okhttp3.Call
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -132,8 +133,9 @@ class OpenAiCompatibleClient(
             .build()
     }
 
+    // Deliver prior text/status events across flowOn before surfacing the terminal error.
     fun complete(config: ApiConfig, apiKey: String, userMessage: String,
-                 onCallCreated: (Call) -> Unit = {}): Flow<ReadingEvent> = flow {
+                 onCallCreated: (Call) -> Unit = {}): Flow<ReadingEvent> = flow<Result<ReadingEvent>> {
         val request = buildRequest(config, apiKey, userMessage)
         val settings = config.network
         val maxRetries = if (settings.autoRetry) settings.maxRetries else 0
@@ -162,11 +164,11 @@ class OpenAiCompatibleClient(
                             when (event) {
                                 is ReadingEvent.Text -> {
                                     hasText = hasText || event.value.isNotEmpty()
-                                    emit(event)
+                                    emit(Result.success(event))
                                 }
                                 ReadingEvent.Finished -> {
                                     if (!hasText) throw ApiException("API 返回空内容。")
-                                    emit(ReadingEvent.Finished)
+                                    emit(Result.success(ReadingEvent.Finished))
                                 }
                                 else -> Unit
                             }
@@ -183,8 +185,8 @@ class OpenAiCompatibleClient(
                             throw ApiException("API 返回的 JSON 格式无效。")
                         }
                         if (text.isEmpty()) throw ApiException("API 返回空内容。")
-                        emit(ReadingEvent.Text(text))
-                        emit(ReadingEvent.Finished)
+                        emit(Result.success(ReadingEvent.Text(text)))
+                        emit(Result.success(ReadingEvent.Finished))
                     }
                 }
                 return@flow
@@ -193,28 +195,37 @@ class OpenAiCompatibleClient(
             } catch (error: IOException) {
                 val safeToRetry = !hasText && (error is HttpFailure && error.temporary ||
                     error is ConnectException || error is UnknownHostException || error is NoRouteToHostException)
-                if (!safeToRetry || maxRetries == 0) throw error
+                if (!safeToRetry || maxRetries == 0) {
+                    emit(Result.failure(error))
+                    return@flow
+                }
                 if (retries >= maxRetries) {
-                    emit(ReadingEvent.RetryExhausted)
-                    throw error
+                    emit(Result.success(ReadingEvent.RetryExhausted))
+                    emit(Result.failure(error))
+                    return@flow
                 }
                 val next = retries + 1
                 val wait = retryPolicy.waitMillis(next, (error as? HttpFailure)?.retryAfter)
-                    ?: throw ApiException("服务器要求等待超过 60 秒，请稍后手动重试。")
+                    ?: run {
+                        emit(Result.failure(ApiException("服务器要求等待超过 60 秒，请稍后手动重试。")))
+                        return@flow
+                    }
                 if (cumulativeWait + wait > 120_000L) {
-                    emit(ReadingEvent.RetryExhausted)
-                    throw ApiException("自动重试等待时间已达上限，请稍后手动重试。")
+                    emit(Result.success(ReadingEvent.RetryExhausted))
+                    emit(Result.failure(ApiException("自动重试等待时间已达上限，请稍后手动重试。")))
+                    return@flow
                 }
                 retries = next
                 cumulativeWait += wait
-                emit(ReadingEvent.RetryWaiting(retries, maxRetries, ((wait + 999) / 1000).toInt()))
+                emit(Result.success(ReadingEvent.RetryWaiting(retries, maxRetries,
+                    ((wait + 999) / 1000).toInt())))
                 retryWaiter.wait(wait)
-                emit(ReadingEvent.Retrying(retries, maxRetries))
+                emit(Result.success(ReadingEvent.Retrying(retries, maxRetries)))
             } finally {
                 call.cancel()
             }
         }
-    }.flowOn(Dispatchers.IO).buffer(0)
+    }.flowOn(Dispatchers.IO).buffer(0).map { it.getOrThrow() }
 
     internal fun configuredClient(config: ApiConfig): OkHttpClient {
         val network = config.network

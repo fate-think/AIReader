@@ -1,0 +1,84 @@
+﻿2026-11-04T04:04:57.2774606Z ##[group]Run ./gradlew testDebugUnitTest --no-daemon
+2026-11-04T04:04:57.2775113Z [36;1m./gradlew testDebugUnitTest --no-daemon[0m
+2026-11-04T04:04:57.2795123Z shell: /usr/bin/bash -e {0}
+2026-11-04T04:04:57.2795408Z env:
+2026-11-04T04:04:57.2795734Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.21-9/x64
+2026-11-04T04:04:57.2796246Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.21-9/x64
+2026-11-04T04:04:57.2796642Z   MAVEN_ARGS: -ntp
+2026-11-04T04:04:57.2796892Z   ANDROID_HOME: /usr/local/lib/android/sdk
+2026-11-04T04:04:57.2797208Z   ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+2026-11-04T04:04:57.2797498Z ##[endgroup]
+2026-11-04T04:04:57.9449520Z 
+2026-11-04T04:04:57.9451541Z Welcome to Gradle 8.11.1!
+2026-11-04T04:04:57.9452166Z 
+2026-11-04T04:04:57.9462313Z Here are the highlights of this release:
+2026-11-04T04:04:57.9463472Z  - Parallel load and store for Configuration Cache
+2026-11-04T04:04:57.9464836Z  - Java compilation errors at the end of the build output
+2026-11-04T04:04:57.9465785Z  - Consolidated report for warnings and deprecations
+2026-11-04T04:04:57.9466240Z 
+2026-11-04T04:04:57.9466797Z For more details see https://docs.gradle.org/8.11.1/release-notes.html
+2026-11-04T04:04:57.9467381Z 
+2026-11-04T04:04:58.0446024Z To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.11.1/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+2026-11-04T04:04:59.1441862Z Daemon will be stopped at the end of the build 
+2026-11-04T04:05:44.0459604Z > Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+2026-11-04T04:05:44.0484722Z > Task :app:preBuild UP-TO-DATE
+2026-11-04T04:05:44.0485529Z > Task :app:preDebugBuild UP-TO-DATE
+2026-11-04T04:05:50.7442056Z > Task :app:generateDebugResValues
+2026-11-04T04:05:50.7444541Z > Task :app:checkDebugAarMetadata
+2026-11-04T04:05:50.8440230Z > Task :app:mapDebugSourceSetPaths
+2026-11-04T04:05:50.9465612Z > Task :app:generateDebugResources
+2026-11-04T04:05:52.2438519Z > Task :app:packageDebugResources
+2026-11-04T04:05:52.2439657Z > Task :app:mergeDebugResources
+2026-11-04T04:05:52.7475558Z > Task :app:createDebugCompatibleScreenManifests
+2026-11-04T04:05:52.7505059Z > Task :app:extractDeepLinksDebug
+2026-11-04T04:05:52.8438026Z > Task :app:parseDebugLocalResources
+2026-11-04T04:05:53.0445701Z > Task :app:processDebugMainManifest
+2026-11-04T04:05:53.1440274Z > Task :app:processDebugManifest
+2026-11-04T04:05:54.5439924Z > Task :app:processDebugManifestForPackage
+2026-11-04T04:05:54.5441206Z > Task :app:javaPreCompileDebug
+2026-11-04T04:05:55.0444500Z > Task :app:preDebugUnitTestBuild UP-TO-DATE
+2026-11-04T04:05:55.0446890Z > Task :app:javaPreCompileDebugUnitTest
+2026-11-04T04:05:55.3437639Z > Task :app:processDebugResources
+2026-11-04T04:06:05.2438052Z > Task :app:kspDebugKotlin
+2026-11-04T04:06:33.8445217Z 
+2026-11-04T04:06:33.8466928Z > Task :app:compileDebugKotlin
+2026-11-04T04:06:33.8470297Z w: file:///home/runner/work/AIReader/AIReader/app/src/main/java/com/example/aireader/MainActivity.kt:192:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+2026-11-04T04:06:33.8513200Z w: file:///home/runner/work/AIReader/AIReader/app/src/main/java/com/example/aireader/MainActivity.kt:407:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+2026-11-04T04:06:33.8567413Z w: file:///home/runner/work/AIReader/AIReader/app/src/main/java/com/example/aireader/MainActivity.kt:463:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+2026-11-04T04:06:33.8571208Z w: file:///home/runner/work/AIReader/AIReader/app/src/main/java/com/example/aireader/MarkdownResult.kt:84:66 'var startNumber: Int' is deprecated. Deprecated in Java.
+2026-11-04T04:06:33.8610827Z w: file:///home/runner/work/AIReader/AIReader/app/src/main/java/com/example/aireader/MarkdownResult.kt:197:5 'fun ClickableText(text: AnnotatedString, modifier: Modifier = ..., style: TextStyle = ..., softWrap: Boolean = ..., overflow: TextOverflow = ..., maxLines: Int = ..., onTextLayout: (TextLayoutResult) -> Unit = ..., onClick: (Int) -> Unit): Unit' is deprecated. Use Text or BasicText and pass an AnnotatedString that contains a LinkAnnotation. Check LinkAnnotation's documentation for more details and samples.
+2026-11-04T04:06:33.8649677Z w: file:///home/runner/work/AIReader/AIReader/app/src/main/java/com/example/aireader/ReadingHistoryScreens.kt:99:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+2026-11-04T04:06:33.8674513Z 
+2026-11-04T04:06:33.8705093Z > Task :app:compileDebugJavaWithJavac NO-SOURCE
+2026-11-04T04:06:33.9439363Z > Task :app:processDebugJavaRes
+2026-11-04T04:06:33.9442959Z > Task :app:bundleDebugClassesToRuntimeJar
+2026-11-04T04:06:33.9444709Z > Task :app:bundleDebugClassesToCompileJar
+2026-11-04T04:06:35.2444861Z > Task :app:kspDebugUnitTestKotlin
+2026-11-04T04:06:39.8458575Z > Task :app:compileDebugUnitTestKotlin
+2026-11-04T04:06:39.8465512Z > Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+2026-11-04T04:06:39.8585430Z > Task :app:processDebugUnitTestJavaRes
+2026-11-04T04:06:44.4442559Z 
+2026-11-04T04:06:44.4455326Z > Task :app:testDebugUnitTest
+2026-11-04T04:06:44.4456231Z 
+2026-11-04T04:06:44.4456794Z NetworkRetryTest > exponentialBackoffAndMaximumRetries FAILED
+2026-11-04T04:06:44.4457689Z     java.lang.AssertionError at NetworkRetryTest.kt:114
+2026-11-04T04:06:44.5436384Z 
+2026-11-04T04:06:44.5437220Z NetworkRetryTest > partialSseAndSseErrorNeverRetry FAILED
+2026-11-04T04:06:44.5438179Z     java.lang.AssertionError at NetworkRetryTest.kt:137
+2026-11-04T04:06:45.5445453Z 
+2026-11-04T04:06:45.5475235Z 127 tests completed, 2 failed
+2026-11-04T04:06:45.6446001Z 
+2026-11-04T04:06:45.6464785Z 
+2026-11-04T04:06:45.6466157Z > Task :app:testDebugUnitTest FAILED
+2026-11-04T04:06:45.6466848Z 24 actionable tasks: 24 executed
+2026-11-04T04:06:45.6471670Z FAILURE: Build failed with an exception.
+2026-11-04T04:06:45.6472206Z 
+2026-11-04T04:06:45.6472661Z * What went wrong:
+2026-11-04T04:06:45.6484905Z Execution failed for task ':app:testDebugUnitTest'.
+2026-11-04T04:06:45.6486781Z > There were failing tests. See the report at: file:///home/runner/work/AIReader/AIReader/app/build/reports/tests/testDebugUnitTest/index.html
+2026-11-04T04:06:45.6488051Z 
+2026-11-04T04:06:45.6488397Z * Try:
+2026-11-04T04:06:45.6489128Z > Run with --scan to get full insights.
+2026-11-04T04:06:45.6489755Z 
+2026-11-04T04:06:45.6492245Z BUILD FAILED in 1m 48s
+2026-11-04T04:06:46.0962183Z ##[error]Process completed with exit code 1.
