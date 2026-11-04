@@ -118,7 +118,8 @@ class NetworkRetryTest {
         assertNotNull(error)
         assertEquals(3, server.requestCount)
         assertEquals(listOf(2000L, 4000L), waits)
-        assertTrue(events.last() == ReadingEvent.RetryExhausted)
+        assertEquals("达到重试上限时，应先交付状态事件再抛出请求错误。",
+            ReadingEvent.RetryExhausted, events.lastOrNull())
     }
 
     @Test fun waitCanBeCancelledBeforeRetry() = runBlocking {

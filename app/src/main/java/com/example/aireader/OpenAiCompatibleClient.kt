@@ -2,6 +2,7 @@ package com.example.aireader
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -213,7 +214,7 @@ class OpenAiCompatibleClient(
                 call.cancel()
             }
         }
-    }.flowOn(Dispatchers.IO)
+    }.flowOn(Dispatchers.IO).buffer(0)
 
     internal fun configuredClient(config: ApiConfig): OkHttpClient {
         val network = config.network
