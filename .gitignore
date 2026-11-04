@@ -19,3 +19,6 @@ captures/
 secrets.properties
 google-services.json
 service-account*.json
+*.db
+*.db-wal
+*.db-shm

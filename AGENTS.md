@@ -20,6 +20,7 @@
 - Coroutines
 - OkHttp
 - DataStore
+- Room（本地阅读历史）
 - Android Keystore
 - Gradle Kotlin DSL
 - minSdk 26
@@ -130,8 +131,16 @@ paraOnce = 3
 - API Key 不写入代码或日志。
 - API Key 使用 Android Keystore 保护。
 - 普通配置使用 DataStore 保存。
-- 用户文章默认不持久化到磁盘。
+- 当前输入框的文章草稿不自动单独持久化；成功生成报告时，按阅读历史开关将原文快照保存到本机 Room。
 - 不提交密钥、认证文件和敏感数据到 Git。
+
+## 阅读历史（第八阶段）
+
+- 成功完成的报告使用 Room 本地保存；`requestId` 是历史主键，重复完成事件只能插入一次。失败、取消和未完成流不得保存。
+- 自动保存和保存原文开关位于现有 DataStore，默认均开启；请求开始时固定设置、原文、阅读模式名称、模型和 API 配置名称快照。
+- 历史列表只查询摘要，详情按 ID 读取完整内容；历史记录不保存 API Key、提示词正文或完整请求。
+- 数据库升级必须添加显式 Migration，不使用无条件 destructive migration。现有全局 `allowBackup=false` 保持不变。
+- 历史删除只操作 Room，不影响提示词、API 配置或 DataStore。Android 设备测试放在 `androidTest`，本地云服务器不运行 Android 构建。
 
 ## 开发和验证
 

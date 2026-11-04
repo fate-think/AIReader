@@ -33,8 +33,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,12 +62,45 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
+    val historyModel: ReadingHistoryViewModel = viewModel()
+    val historyState by historyModel.state.collectAsStateWithLifecycle()
     var page by rememberSaveable { mutableStateOf(0) }
+    var historyId by rememberSaveable { mutableStateOf<String?>(null) }
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     var creating by rememberSaveable { mutableStateOf(false) }
     var previewOpen by rememberSaveable { mutableStateOf(false) }
     var htmlPreview by remember { mutableStateOf<String?>(null) }
+    var historyPreviewMarkdown by remember { mutableStateOf<String?>(null) }
+    var historyPreviewHtml by remember { mutableStateOf<String?>(null) }
     val previewTheme = if (useDark) HtmlDocumentTheme.DARK else HtmlDocumentTheme.LIGHT
+    LaunchedEffect(page, historyId) {
+        if (page == 3 && historyId != null) historyModel.open(historyId!!)
+        else historyModel.closeDetail()
+    }
+    BackHandler(enabled = page == 3 && historyId != null && historyPreviewMarkdown == null) {
+        historyId = null
+    }
+    LaunchedEffect(historyPreviewMarkdown, previewTheme, state.htmlFontSizePx) {
+        val markdown = historyPreviewMarkdown
+        if (markdown != null) {
+            historyPreviewHtml = null
+            try { historyPreviewHtml = withContext(Dispatchers.Default) {
+                MarkdownHtmlConverter().convert(markdown, state.htmlFontSizePx, previewTheme)
+            } } catch (_: Exception) {
+                historyPreviewMarkdown = null
+                historyModel.reportFailure("HTML 预览生成失败。")
+            }
+        }
+    }
+    if (historyPreviewMarkdown != null) {
+        val html = historyPreviewHtml
+        if (html == null) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        } else HtmlPreview(html, state.htmlFontSizePx,
+            onFontSizeChange = model::setHtmlFontSize,
+            onClose = { historyPreviewMarkdown = null; historyPreviewHtml = null })
+        return
+    }
     LaunchedEffect(previewTheme, state.htmlFontSizePx, previewOpen, state.loaded) {
         if (previewOpen) {
             if (state.loaded && state.result.isEmpty()) {
@@ -94,20 +129,31 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 2.dp
         ) {
-            Text(when { creating || editingId != null -> "编辑阅读模式"; page == 0 -> "AI 阅读助手"; page == 1 -> "提示词管理"; else -> "API 设置" },
+            Text(when { creating || editingId != null -> "编辑阅读模式"; page == 0 -> "AI 阅读助手";
+                page == 1 -> "提示词管理"; page == 2 -> "API 设置";
+                historyId != null -> "历史报告"; else -> "阅读历史" },
                 style = MaterialTheme.typography.headlineSmall,
                 modifier = Modifier.statusBarsPadding().padding(20.dp))
         } },
         bottomBar = { if (!creating && editingId == null) NavigationBar {
-            listOf("阅读", "提示词", "设置").forEachIndexed { index, label ->
-                NavigationBarItem(selected = page == index, onClick = { page = index },
-                    icon = { Text(listOf("◉", "✎", "⚙")[index]) }, label = { Text(label) })
+            listOf("阅读", "提示词", "设置", "历史").forEachIndexed { index, label ->
+                NavigationBarItem(selected = page == index, onClick = {
+                    page = index
+                    if (index != 3) historyId = null
+                }, icon = { Text(listOf("◉", "✎", "⚙", "▤")[index]) }, label = { Text(label) })
             }
         } }
     ) { padding ->
         val modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp)
+        val historyModifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)
         when {
             !state.loaded -> Box(modifier) { CircularProgressIndicator() }
+            page == 3 && historyId != null -> ReadingHistoryDetailScreen(historyState, historyModel,
+                onBack = { historyId = null },
+                onPreviewHtml = { historyPreviewMarkdown = it },
+                fontSizePx = state.htmlFontSizePx, modifier = historyModifier)
+            page == 3 -> ReadingHistoryListScreen(historyState, historyModel,
+                onOpen = { historyId = it }, modifier = historyModifier)
             state.modes.isEmpty() -> Text("提示词数据读取失败：${state.storageError ?: "未知错误"}", modifier = modifier)
             creating || editingId != null -> ModeEditor(
                 mode = state.modes.firstOrNull { it.id == editingId },
@@ -125,7 +171,7 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
                 onHtmlPreview = { htmlPreview = it; previewOpen = true }, modifier = modifier)
             page == 1 -> ModesPage(state, model, onEdit = { editingId = it },
                 onAdd = { creating = true }, modifier = modifier)
-            else -> SettingsPage(state, model, modifier)
+            else -> SettingsPage(state, model, historyModel, historyState, modifier)
         }
     }
     if (state.modes.isNotEmpty() && state.storageError != null) {
@@ -260,6 +306,7 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
         })
         if (active) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         state.readingError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        state.historySaveMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (state.result.isNotEmpty()) {
             if (active && !followResult) {
                 TextButton(onClick = { followResult = true }) { Text("回到底部") }
@@ -527,12 +574,15 @@ private fun ModeEditor(mode: ReadingMode?, onSave: suspend (String, String) -> B
 }
 
 @Composable
-private fun SettingsPage(state: ReaderState, model: ReaderViewModel, modifier: Modifier) {
+private fun SettingsPage(state: ReaderState, model: ReaderViewModel,
+                         historyModel: ReadingHistoryViewModel,
+                         historyState: ReadingHistoryState, modifier: Modifier) {
     val selectedProfile = state.apiProfiles.firstOrNull { it.id == state.selectedApiProfileId }
     val initial = state.settings
     val editorKey = selectedProfile?.id to initial
     var profileName by remember(selectedProfile?.id) { mutableStateOf(selectedProfile?.name.orEmpty()) }
     var pendingDelete by remember { mutableStateOf<ApiProfile?>(null) }
+    var confirmClearHistory by remember { mutableStateOf(false) }
     var baseUrl by remember(editorKey) { mutableStateOf(initial.baseUrl) }
     var newApiKey by remember(editorKey) { mutableStateOf("") }
     var showApiKey by remember { mutableStateOf(false) }
@@ -595,6 +645,27 @@ private fun SettingsPage(state: ReaderState, model: ReaderViewModel, modifier: M
             }
         }
         state.themeMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        HorizontalDivider()
+        Text("阅读历史", style = MaterialTheme.typography.titleLarge)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("自动保存阅读历史")
+            Switch(checked = state.historyOptions.autoSave, onCheckedChange = {
+                model.saveHistoryOptions(state.historyOptions.copy(autoSave = it))
+            })
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("保存文章原文")
+            Switch(checked = state.historyOptions.saveOriginalArticle,
+                enabled = state.historyOptions.autoSave, onCheckedChange = {
+                    model.saveHistoryOptions(state.historyOptions.copy(saveOriginalArticle = it))
+                })
+        }
+        Text("历史仅保存在本机，应用已禁用 Android 自动备份。卸载应用会删除本机历史；无法保证恢复。",
+            style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick = { confirmClearHistory = true }, modifier = Modifier.fillMaxWidth()) {
+            Text("清空全部阅读历史")
+        }
+        historyState.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         HorizontalDivider()
         Text("API 设置", style = MaterialTheme.typography.titleLarge)
         OutlinedTextField(profileName, { profileName = it }, label = { Text("配置名称") },
@@ -707,4 +778,8 @@ private fun SettingsPage(state: ReaderState, model: ReaderViewModel, modifier: M
             onConfirm = { model.deleteApiProfile(profile.id); pendingDelete = null },
             onDismiss = { pendingDelete = null })
     }
+    if (confirmClearHistory) ConfirmModeActionDialog("确定清空全部阅读历史？",
+        "全部已保存的报告和文章原文将从本机删除，无法恢复。提示词、API 配置及密钥不会改变。",
+        onConfirm = { historyModel.clearAll(); confirmClearHistory = false },
+        onDismiss = { confirmClearHistory = false })
 }

@@ -4,7 +4,7 @@
 
 ## 技术与构建
 
-Kotlin、Jetpack Compose、Material 3、MVVM/StateFlow。minSdk 26，compileSdk/targetSdk 35。Gradle 8.11.1、AGP 8.9.2、Kotlin/Compose Compiler 2.1.20、Compose BOM 2025.04.01、JDK 17。
+Kotlin、Jetpack Compose、Material 3、MVVM/StateFlow、Room。minSdk 26，compileSdk/targetSdk 35。Gradle 8.11.1、AGP 8.9.2、Kotlin/Compose Compiler 2.1.20、KSP 2.1.20-2.0.1、Room 2.7.2、Compose BOM 2025.04.01、JDK 17。
 
 本机不安装 Android SDK，也不执行 Android 构建。推送到 `main` 或手动运行 [构建工作流](.github/workflows/build-apk.yml)，由 GitHub 托管 Runner 执行 `testDebugUnitTest` 与 `assembleDebug`，并上传 Debug APK。
 
@@ -12,7 +12,7 @@ Kotlin、Jetpack Compose、Material 3、MVVM/StateFlow。minSdk 26，compileSdk/
 
 四份内置提示词位于 `app/src/main/assets/prompts/`。内置模式有稳定 ID，可编辑，并可在确认后从 assets 恢复默认；不能删除。提示词管理页的“我的自定义提示词”区域可持续新增、编辑、重命名和删除任意多套模式。删除前会确认；删除当前模式后自动选中第一套内置模式。编辑未保存内容时返回会提醒。
 
-模式列表、创建顺序和当前选择统一保存在 DataStore 中。旧版 `modes` 数据首次读取时迁移；数据解析失败会显示错误并停止写入，避免覆盖已保存的提示词。API 配置列表及当前选择也保存在 DataStore 的单个快照中；每套配置的 API Key 分别使用 Android Keystore 的 AES-GCM 密钥加密后保存，不进入普通界面状态。Android 自动备份已禁用。文章只保存在界面状态中。
+模式列表、创建顺序和当前选择统一保存在 DataStore 中。旧版 `modes` 数据首次读取时迁移；数据解析失败会显示错误并停止写入，避免覆盖已保存的提示词。API 配置列表及当前选择也保存在 DataStore 的单个快照中；每套配置的 API Key 分别使用 Android Keystore 的 AES-GCM 密钥加密后保存，不进入普通界面状态。Android 自动备份已禁用。当前文章草稿只保存在界面状态；成功生成时是否将原文快照写入本机历史，由用户设置决定。
 
 ## 文章预处理
 
@@ -32,7 +32,7 @@ Kotlin、Jetpack Compose、Material 3、MVVM/StateFlow。minSdk 26，compileSdk/
 
 API 设置页的“网络稳定性”区域可调整自动重试、最大重试次数（0–5）、连接超时（10–60 秒）和读取空闲超时（30–600 秒）；默认分别为开启、2 次、20 秒和 180 秒。设置通过现有 DataStore 保存，旧配置获得默认值。临时 429、500、502、503 及确认未建立连接的失败可在尚未收到生成正文时按指数退避重试；配额不足、认证或参数错误、TLS 错误、读取超时和已开始输出的流不会自动重试。504 可能已由上游处理，默认提示手动重新生成；只有同时开启自动重试和“允许重试 504”才会有限重试，可能产生重复调用费用。服务端的 `Retry-After` 优先于指数退避；要求等待超过 60 秒时停止自动重试。等待重试时可取消。测试连接始终只发送一次请求。
 
-阅读报告支持标题、粗体、斜体、嵌套列表、引用、代码块、表格及用户点击的网页链接。宽表格可横向滚动。生成过程中先以纯文本显示增量内容，结束后渲染 Markdown；用户向上滚动时暂停自动跟随，可点击“回到底部”恢复。结果可复制、通过系统分享面板分享，或通过系统文件选择器保存为 UTF-8 Markdown 文件。清空结果前会确认。文章和报告默认不会自动写入文件或上传到其他服务。
+阅读报告支持标题、粗体、斜体、嵌套列表、引用、代码块、表格及用户点击的网页链接。宽表格可横向滚动。生成过程中先以纯文本显示增量内容，结束后渲染 Markdown；用户向上滚动时暂停自动跟随，可点击“回到底部”恢复。结果可复制、通过系统分享面板分享，或通过系统文件选择器保存为 UTF-8 Markdown 文件。清空结果前会确认。成功完成的报告默认写入本机阅读历史；文章与报告不会自动上传到其他服务。
 
 API 设置页的“外观设置”提供跟随系统、浅色模式和深色模式，默认跟随系统。选择后立即应用到全部 Compose 页面及系统栏，并以独立的 `theme_mode` 键保存在现有 DataStore 中。Markdown 的代码背景、表格边框和链接颜色跟随 Material 3 配色；主题切换不会修改文章、提示词或阅读结果，也不会重新发起 AI 请求。
 
@@ -40,9 +40,21 @@ API 设置页的“外观设置”提供跟随系统、浅色模式和深色模�
 
 应用内 HTML 预览严格使用当前 App 的浅色或深色配色，切换主题时仅重新生成本地 HTML。保存和浏览器打开的独立 HTML 使用 `prefers-color-scheme`，由阅读器或浏览器环境决定配色；字号设置继续生效。
 
+## 阅读历史
+
+成功生成且内容非空的报告默认自动保存到本机 Room 数据库。每次请求使用固定 UUID 作为主键，重复完成通知不会生成重复历史；失败、停止生成和未完成的流不会保存。保存时记录当时的模式名称、模型与 API 配置名称快照，不依赖后续配置是否仍存在。标题取原始文章第一行非空文本的前 50 字；用户可在详情中重命名。
+
+“设置 → 阅读历史”提供“自动保存阅读历史”和“保存文章原文”两个开关，默认开启，使用 DataStore 持久化。关闭自动保存不删除旧记录；关闭保存原文后，新记录仍保留完整 Markdown 报告，但不保存文章。两个选项在请求开始时固定。保存失败会提示用户，当前生成结果继续留在阅读页。
+
+底部“历史”页面可按标题或阅读模式名称搜索、查看按创建时间倒序的摘要、打开完整报告、多选删除或确认后清空全部。列表通过 Room Flow 仅查询标题、时间、模式、模型及前 160 字预览；完整文章与 Markdown 只在打开详情时按 ID 读取。详情复用当前 Markdown 展示、HTML 转换与预览、Markdown/HTML 导出，也支持复制、分享、重命名和确认删除。历史页面不发起 AI 请求，不改动当前文章草稿或报告。
+
+历史可能包含敏感文章和报告，只保存在应用私有数据库，不保存 API Key，也不上传服务器。应用已禁用 Android 自动备份；卸载应用通常会删除本机历史，不保证卸载后恢复。Room 数据库从 schema version 1 开始，后续升级须提供明确的 Migration，不启用破坏性迁移。
+
 ## 测试
 
 GitHub Actions 运行 `testDebugUnitTest`。提示词管理、预处理与设置测试继续保留；MockWebServer 测试覆盖 URL、单条 user 消息、参数、流式与普通响应、错误处理、取消及重定向。多配置测试覆盖旧设置与密文迁移、重复迁移、配置及密钥隔离、选择持久化、复制与删除、并发新增、测试连接和请求快照。主题测试覆盖模式选择、持久化、旧配置、未知值与 HTML 配色；思考深度、网络重试和 HTML 导出测试继续保留。界面切换、系统栏、SSE 期间切换主题、WebView、浏览器兼容性、系统分享与文件选择器需要通过 GitHub Actions 构建 APK 后在真机验证。
+
+阅读历史新增 JVM 单元测试覆盖请求快照、标题和保存设置；`ReadingHistoryDatabaseTest` 是 Android 设备测试，覆盖 Room 的幂等插入、排序、摘要、长报告、搜索、详情、重命名及删除。当前 Actions 只执行 `testDebugUnitTest`，不会执行 `connectedDebugAndroidTest`；Room 设备测试及界面操作仍需在 Android 设备上验证。首次 Actions 构建会生成 Room schema JSON，应提交生成的 version 1 schema 供后续迁移测试使用。
 
 ## Wrapper 说明
 

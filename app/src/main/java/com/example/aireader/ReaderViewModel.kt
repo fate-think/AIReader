@@ -51,6 +51,7 @@ data class ReaderState(
     val selectedModeId: String? = null,
     val article: String = "",
     val preprocessOptions: PreprocessOptions = PreprocessOptions(),
+    val historyOptions: HistorySaveOptions = HistorySaveOptions(),
     val settings: ApiSettings = ApiSettings(),
     val apiProfiles: List<ApiProfile> = emptyList(),
     val selectedApiProfileId: String? = null,
@@ -61,6 +62,7 @@ data class ReaderState(
     val retryMessage: String? = null,
     val settingsMessage: String? = null,
     val resultActionMessage: String? = null,
+    val historySaveMessage: String? = null,
     val htmlFontSizePx: Int = 24,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val themeMessage: String? = null,
@@ -88,7 +90,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val preprocessSettings = PreprocessSettingsStore(context.dataStore)
     private val htmlSettings = HtmlSettingsStore(context.dataStore)
     private val themeSettings = ThemeSettingsStore(context.dataStore)
+    private val historySettings = HistorySettingsStore(context.dataStore)
+    private val historyRepository by lazy { ReadingHistoryRepository(ReadingHistoryDatabase.get(context).historyDao()) }
     private val themeSaveMutex = Mutex()
+    private val historySaveMutex = Mutex()
     private val htmlConverter = MarkdownHtmlConverter()
     private val promptRepository = PromptRepository(context.dataStore) { file ->
         context.assets.open("prompts/$file").bufferedReader(Charsets.UTF_8).use { it.readText() }
@@ -129,9 +134,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             val options = preprocessSettings.options.first()
             val htmlFontSize = htmlSettings.fontSizePx.first()
             val themeMode = themeSettings.mode.first()
+            val historyOptions = historySettings.options.first()
             promptRepository.migrateIfNeeded()
             _state.value = _state.value.copy(preprocessOptions = options,
-                htmlFontSizePx = htmlFontSize, themeMode = themeMode)
+                htmlFontSizePx = htmlFontSize, themeMode = themeMode, historyOptions = historyOptions)
             promptRepository.catalogs.collect { catalog ->
                 _state.value = _state.value.copy(
                     modes = catalog.modes, selectedModeId = catalog.selectedModeId, loaded = true
@@ -229,6 +235,24 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch { preprocessSettings.save(options) }
     }
 
+    fun saveHistoryOptions(options: HistorySaveOptions) {
+        _state.value = _state.value.copy(historyOptions = options, settingsMessage = null)
+        viewModelScope.launch {
+            try { historySaveMutex.withLock {
+                if (_state.value.historyOptions == options) historySettings.save(options)
+            } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (_state.value.historyOptions == options) {
+                    val persisted = try { historySettings.options.first() }
+                        catch (_: Exception) { options }
+                    _state.value = _state.value.copy(historyOptions = persisted,
+                        settingsMessage = "阅读历史设置保存失败，请重试。")
+                }
+            }
+        }
+    }
+
     fun finalRequestPreview(): FinalRequestPreview? = finalRequestPreview(_state.value)
 
     private fun finalRequestPreview(snapshot: ReaderState): FinalRequestPreview? {
@@ -249,10 +273,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         try { client.validate(config, key) }
         catch (error: Exception) { readingError(ApiErrorMapper.message(error)); return }
 
+        val mode = snapshot.modes.first { it.id == snapshot.selectedModeId }
+        val apiName = snapshot.apiProfiles.firstOrNull { it.id == snapshot.selectedApiProfileId }?.name.orEmpty()
+        val historyCapture = HistoryCapture.start(snapshot.article, mode, config.modelId,
+            apiName, snapshot.historyOptions)
         val generation = requestGeneration.next()
         accumulated = StringBuilder()
         _state.value = snapshot.copy(result = "", status = ReadingStatus.Loading,
-            readingError = null, retryMessage = null, resultActionMessage = null)
+            readingError = null, retryMessage = null, resultActionMessage = null,
+            historySaveMessage = null)
         readingJob = viewModelScope.launch {
             var lastUpdate = 0L
             try {
@@ -279,8 +308,22 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         ReadingEvent.RetryExhausted -> _state.value = _state.value.copy(
                             status = ReadingStatus.RetryExhausted, retryMessage = null)
                         ReadingEvent.Finished -> {
-                            _state.value = _state.value.copy(result = accumulated.toString(),
+                            val finishedReport = accumulated.toString()
+                            _state.value = _state.value.copy(result = finishedReport,
                                 status = ReadingStatus.Completed, retryMessage = null)
+                            historyCapture.onEvent(event, finishedReport)?.let { record ->
+                                viewModelScope.launch(Dispatchers.IO) {
+                                    try { historyRepository.insertOnce(record) }
+                                    catch (cancelled: CancellationException) { throw cancelled }
+                                    catch (_: Exception) {
+                                        withContext(Dispatchers.Main) {
+                                            if (requestGeneration.isCurrent(generation)) {
+                                                _state.value = _state.value.withHistorySaveFailure()
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -329,7 +372,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         accumulated = StringBuilder()
         cachedHtml = null
         _state.value = _state.value.copy(result = "", status = ReadingStatus.Idle,
-            readingError = null, retryMessage = null, resultActionMessage = null)
+            readingError = null, retryMessage = null, resultActionMessage = null,
+            historySaveMessage = null)
     }
 
     fun prepareMarkdownExport(): Boolean {
