@@ -16,6 +16,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.key
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -25,6 +26,7 @@ import java.io.ByteArrayInputStream
 fun HtmlPreview(html: String, fontSizePx: Int, onFontSizeChange: (Int) -> Unit, onClose: () -> Unit) {
     BackHandler(onBack = onClose)
     val context = LocalContext.current
+    val webBackground = MaterialTheme.colorScheme.background.toArgb()
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)
         .statusBarsPadding().navigationBarsPadding()) {
         Surface(Modifier.fillMaxWidth()) {
@@ -38,6 +40,7 @@ fun HtmlPreview(html: String, fontSizePx: Int, onFontSizeChange: (Int) -> Unit, 
         }
         key(html) { AndroidView(factory = { viewContext ->
             WebView(viewContext).apply {
+                setBackgroundColor(webBackground)
                 settings.javaScriptEnabled = false
                 settings.domStorageEnabled = false
                 settings.allowFileAccess = false

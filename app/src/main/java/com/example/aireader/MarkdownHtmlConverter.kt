@@ -11,17 +11,32 @@ import org.commonmark.renderer.html.HtmlRenderer
 import java.net.URI
 
 /** Converts untrusted Markdown into a self-contained, offline HTML document. */
+enum class HtmlDocumentTheme { AUTO, LIGHT, DARK }
+
 class MarkdownHtmlConverter {
     private val extensions = listOf(TablesExtension.create(), StrikethroughExtension.create())
     private val parser = Parser.builder().extensions(extensions).build()
     private val renderer = HtmlRenderer.builder().extensions(extensions)
         .escapeHtml(true).sanitizeUrls(true).build()
 
-    fun convert(markdown: String, fontSizePx: Int = 24): String {
+    fun convert(markdown: String, fontSizePx: Int = 24,
+                theme: HtmlDocumentTheme = HtmlDocumentTheme.AUTO): String {
         require(fontSizePx in 14..36) { "HTML 字体大小必须在 14–36px 之间。" }
         val document = parser.parse(markdown)
         removeUnsafeResources(document)
         val body = renderer.render(document)
+        val lightColors = "--page-bg:#ffffff; --text-color:#202124; --code-bg:#f4f5f7; " +
+            "--table-border:#c8c8c8; --quote-border:#b4b9c4; --quote-text:#555555; " +
+            "--link-color:#1758a8;"
+        val darkColors = "--page-bg:#17191c; --text-color:#e8e8e8; --code-bg:#292d32; " +
+            "--table-border:#626a76; --quote-border:#858f9d; --quote-text:#bbbbbb; " +
+            "--link-color:#92bbff;"
+        val themeCss = when (theme) {
+            HtmlDocumentTheme.AUTO -> ":root { color-scheme: light dark; $lightColors }\n" +
+                "@media (prefers-color-scheme: dark) { :root { $darkColors } }"
+            HtmlDocumentTheme.LIGHT -> ":root { color-scheme: light; $lightColors }"
+            HtmlDocumentTheme.DARK -> ":root { color-scheme: dark; $darkColors }"
+        }
         return """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -30,15 +45,16 @@ class MarkdownHtmlConverter {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; script-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'">
 <title>AIReader 阅读报告</title>
 <style>
-body { font-size: ${fontSizePx}px; line-height: 1.7; max-width: 900px; margin: 0 auto; padding: 16px; overflow-wrap: anywhere; font-family: system-ui, sans-serif; color: #202124; background: #fff; }
-pre { overflow-x: auto; padding: 12px; background: #f4f5f7; border-radius: 8px; }
-code { font-family: ui-monospace, monospace; }
+$themeCss
+body { font-size: ${fontSizePx}px; line-height: 1.7; max-width: 900px; margin: 0 auto; padding: 16px; overflow-wrap: anywhere; font-family: system-ui, sans-serif; color: var(--text-color); background: var(--page-bg); }
+pre { overflow-x: auto; padding: 12px; background: var(--code-bg); border-radius: 8px; }
+code { font-family: ui-monospace, monospace; background: var(--code-bg); }
 table { border-collapse: collapse; display: block; overflow-x: auto; max-width: 100%; }
-th, td { border: 1px solid #c8c8c8; padding: 6px 10px; }
+th, td { border: 1px solid var(--table-border); padding: 6px 10px; }
+th { background: var(--code-bg); }
 img { max-width: 100%; }
-blockquote { border-left: 4px solid #b4b9c4; margin-left: 0; padding-left: 16px; color: #555; }
-a { color: #1758a8; }
-@media (prefers-color-scheme: dark) { body { color: #e8e8e8; background: #17191c; } pre { background: #292d32; } blockquote { color: #bbb; } a { color: #92bbff; } }
+blockquote { border-left: 4px solid var(--quote-border); margin-left: 0; padding-left: 16px; color: var(--quote-text); }
+a { color: var(--link-color); }
 </style>
 </head>
 <body>

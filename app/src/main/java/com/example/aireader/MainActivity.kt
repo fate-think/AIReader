@@ -10,6 +10,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -20,6 +21,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -42,32 +44,47 @@ class MainActivity : ComponentActivity() {
         setContent {
             val model: ReaderViewModel = viewModel()
             val state by model.state.collectAsStateWithLifecycle()
-            MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
-                App(state, model)
+            val useDark = state.themeMode.usesDark(isSystemInDarkTheme())
+            LaunchedEffect(useDark) {
+                val style = if (useDark) SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                else SystemBarStyle.light(android.graphics.Color.TRANSPARENT,
+                    android.graphics.Color.TRANSPARENT)
+                enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+            }
+            MaterialTheme(colorScheme = if (useDark) darkColorScheme() else lightColorScheme()) {
+                App(state, model, useDark)
             }
         }
     }
 }
 
 @Composable
-private fun App(state: ReaderState, model: ReaderViewModel) {
+private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
     var page by rememberSaveable { mutableStateOf(0) }
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     var creating by rememberSaveable { mutableStateOf(false) }
+    var previewOpen by rememberSaveable { mutableStateOf(false) }
     var htmlPreview by remember { mutableStateOf<String?>(null) }
-    val appScope = rememberCoroutineScope()
-    htmlPreview?.let { html ->
-        HtmlPreview(html, state.htmlFontSizePx, onFontSizeChange = { size ->
-            model.setHtmlFontSize(size)
-            appScope.launch {
-                try {
-                    model.htmlForCurrentResult(size)?.let {
-                        if (htmlPreview != null && model.state.value.htmlFontSizePx == size) htmlPreview = it
-                    }
-                }
-                catch (_: Exception) { model.reportHtmlFailure("HTML 预览刷新失败。") }
+    val previewTheme = if (useDark) HtmlDocumentTheme.DARK else HtmlDocumentTheme.LIGHT
+    LaunchedEffect(previewTheme, state.htmlFontSizePx, previewOpen, state.loaded) {
+        if (previewOpen) {
+            if (state.loaded && state.result.isEmpty()) {
+                previewOpen = false
+                return@LaunchedEffect
             }
-        }, onClose = { htmlPreview = null })
+            try { model.htmlForCurrentResult(state.htmlFontSizePx, previewTheme)?.let { htmlPreview = it } }
+            catch (_: Exception) { model.reportHtmlFailure("HTML 预览刷新失败。") }
+        }
+    }
+    if (previewOpen) {
+        val html = htmlPreview
+        if (html == null) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        } else {
+            HtmlPreview(html, state.htmlFontSizePx, onFontSizeChange = { size ->
+                model.setHtmlFontSize(size)
+            }, onClose = { previewOpen = false; htmlPreview = null })
+        }
         return
     }
     Scaffold(
@@ -104,7 +121,8 @@ private fun App(state: ReaderState, model: ReaderViewModel) {
                     { model.deleteMode(mode.id); editingId = null }
                 },
                 modifier = modifier)
-            page == 0 -> ReaderPage(state, model, onHtmlPreview = { htmlPreview = it }, modifier = modifier)
+            page == 0 -> ReaderPage(state, model, previewTheme,
+                onHtmlPreview = { htmlPreview = it; previewOpen = true }, modifier = modifier)
             page == 1 -> ModesPage(state, model, onEdit = { editingId = it },
                 onAdd = { creating = true }, modifier = modifier)
             else -> SettingsPage(state, model, modifier)
@@ -119,8 +137,10 @@ private fun App(state: ReaderState, model: ReaderViewModel) {
 
 @Composable
 private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
+                       previewTheme: HtmlDocumentTheme,
                        onHtmlPreview: (String) -> Unit, modifier: Modifier) {
     var expanded by remember { mutableStateOf(false) }
+    var apiExpanded by remember { mutableStateOf(false) }
     var showPreprocessSettings by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf<String?>(null) }
     val clipboard = LocalClipboardManager.current
@@ -162,6 +182,21 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
         }
     }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        val currentApi = state.apiProfiles.firstOrNull { it.id == state.selectedApiProfileId }
+        Text("当前 API 配置：${currentApi?.name ?: "未载入"}",
+            style = MaterialTheme.typography.titleMedium)
+        Box {
+            OutlinedButton(onClick = { apiExpanded = true }, enabled = state.apiProfiles.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth()) {
+                Text("切换配置 · ${currentApi?.config?.modelId?.ifBlank { "未配置模型" } ?: "未配置模型"}")
+            }
+            DropdownMenu(expanded = apiExpanded, onDismissRequest = { apiExpanded = false }) {
+                state.apiProfiles.forEach { profile ->
+                    DropdownMenuItem(text = { Text("${profile.name} · ${profile.config.modelId.ifBlank { "未配置模型" }}") },
+                        onClick = { model.selectApiProfile(profile.id); apiExpanded = false })
+                }
+            }
+        }
         Text("阅读模式", style = MaterialTheme.typography.titleMedium)
         Text("当前模型：${state.settings.modelId.ifBlank { "未配置" }}",
             style = MaterialTheme.typography.bodySmall)
@@ -244,7 +279,7 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
                             onClick = {
                                 moreActions = false; htmlBusy = true
                                 scope.launch {
-                                    try { model.htmlForCurrentResult()?.let(onHtmlPreview) }
+                                    try { model.htmlForCurrentResult(theme = previewTheme)?.let(onHtmlPreview) }
                                     catch (_: Exception) { model.reportHtmlFailure("HTML 预览生成失败。") }
                                     finally { htmlBusy = false }
                                 }
@@ -493,36 +528,77 @@ private fun ModeEditor(mode: ReadingMode?, onSave: suspend (String, String) -> B
 
 @Composable
 private fun SettingsPage(state: ReaderState, model: ReaderViewModel, modifier: Modifier) {
+    val selectedProfile = state.apiProfiles.firstOrNull { it.id == state.selectedApiProfileId }
     val initial = state.settings
-    var baseUrl by remember(initial) { mutableStateOf(initial.baseUrl) }
-    var newApiKey by remember(initial) { mutableStateOf("") }
+    val editorKey = selectedProfile?.id to initial
+    var profileName by remember(selectedProfile?.id) { mutableStateOf(selectedProfile?.name.orEmpty()) }
+    var pendingDelete by remember { mutableStateOf<ApiProfile?>(null) }
+    var baseUrl by remember(editorKey) { mutableStateOf(initial.baseUrl) }
+    var newApiKey by remember(editorKey) { mutableStateOf("") }
     var showApiKey by remember { mutableStateOf(false) }
-    var deleteApiKey by remember(initial) { mutableStateOf(false) }
-    var modelId by remember(initial) { mutableStateOf(initial.modelId) }
-    var temperature by remember(initial) { mutableStateOf(initial.temperature) }
-    var maxTokens by remember(initial) { mutableStateOf(initial.maxOutputTokens) }
-    var streaming by remember(initial) { mutableStateOf(initial.streaming) }
-    var sendTemperature by remember(initial) { mutableStateOf(initial.sendTemperature) }
-    var useMaxCompletionTokens by remember(initial) { mutableStateOf(initial.useMaxCompletionTokens) }
-    var allowHttp by remember(initial) { mutableStateOf(initial.allowHttp) }
-    var autoRetry by remember(initial) { mutableStateOf(initial.autoRetry) }
-    var retryHttp504 by remember(initial) { mutableStateOf(initial.retryHttp504) }
-    var maxRetries by remember(initial) { mutableStateOf(initial.maxRetries) }
-    var connectTimeout by remember(initial) { mutableStateOf(initial.connectTimeoutSeconds) }
-    var readTimeout by remember(initial) { mutableStateOf(initial.readTimeoutSeconds) }
-    var sendReasoningEffort by remember(initial) { mutableStateOf(initial.sendReasoningEffort) }
-    var reasoningEffort by remember(initial) { mutableStateOf(initial.reasoningEffort) }
+    var deleteApiKey by remember(editorKey) { mutableStateOf(false) }
+    var modelId by remember(editorKey) { mutableStateOf(initial.modelId) }
+    var temperature by remember(editorKey) { mutableStateOf(initial.temperature) }
+    var maxTokens by remember(editorKey) { mutableStateOf(initial.maxOutputTokens) }
+    var streaming by remember(editorKey) { mutableStateOf(initial.streaming) }
+    var sendTemperature by remember(editorKey) { mutableStateOf(initial.sendTemperature) }
+    var useMaxCompletionTokens by remember(editorKey) { mutableStateOf(initial.useMaxCompletionTokens) }
+    var allowHttp by remember(editorKey) { mutableStateOf(initial.allowHttp) }
+    var autoRetry by remember(editorKey) { mutableStateOf(initial.autoRetry) }
+    var retryHttp504 by remember(editorKey) { mutableStateOf(initial.retryHttp504) }
+    var maxRetries by remember(editorKey) { mutableStateOf(initial.maxRetries) }
+    var connectTimeout by remember(editorKey) { mutableStateOf(initial.connectTimeoutSeconds) }
+    var readTimeout by remember(editorKey) { mutableStateOf(initial.readTimeoutSeconds) }
+    var sendReasoningEffort by remember(editorKey) { mutableStateOf(initial.sendReasoningEffort) }
+    var reasoningEffort by remember(editorKey) { mutableStateOf(initial.reasoningEffort) }
     var reasoningExpanded by remember { mutableStateOf(false) }
     val draft = ApiSettings(baseUrl, modelId, temperature, maxTokens, streaming,
         sendTemperature, useMaxCompletionTokens, allowHttp, initial.hasApiKey, initial.keyNeedsReentry,
         autoRetry, maxRetries, connectTimeout, readTimeout, retryHttp504,
         sendReasoningEffort, reasoningEffort)
-    val valid = maxTokens.toIntOrNull()?.let { it > 0 } == true &&
+    val valid = profileName.isNotBlank() && selectedProfile != null &&
+        maxTokens.toIntOrNull()?.let { it > 0 } == true &&
         (!sendTemperature || temperature.toDoubleOrNull()?.let { it in 0.0..2.0 } == true) &&
         maxRetries.toIntOrNull()?.let { it in 0..5 } == true &&
         connectTimeout.toIntOrNull()?.let { it in 10..60 } == true &&
         readTimeout.toIntOrNull()?.let { it in 30..600 } == true
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("API 配置列表", style = MaterialTheme.typography.titleLarge)
+        state.apiProfilesError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        state.apiProfiles.forEach { profile ->
+            ElevatedCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(10.dp)) {
+                    Text("${if (profile.id == state.selectedApiProfileId) "当前 · " else ""}${profile.name}",
+                        style = MaterialTheme.typography.titleMedium)
+                    Text(profile.config.modelId.ifBlank { "未配置模型" },
+                        style = MaterialTheme.typography.bodySmall)
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = { model.selectApiProfile(profile.id) },
+                            enabled = profile.id != state.selectedApiProfileId) { Text("使用 / 编辑") }
+                        TextButton(onClick = { model.copyApiProfile(profile.id, profile.name) }) { Text("复制") }
+                        TextButton(onClick = { pendingDelete = profile },
+                            enabled = state.apiProfiles.size > 1) { Text("删除") }
+                    }
+                }
+            }
+        }
+        OutlinedButton(onClick = { model.addApiProfile() }, modifier = Modifier.fillMaxWidth()) {
+            Text("新增 API 配置")
+        }
+        HorizontalDivider()
+        Text("外观设置", style = MaterialTheme.typography.titleLarge)
+        ThemeMode.entries.forEach { mode ->
+            Row(modifier = Modifier.fillMaxWidth().clickable { model.setThemeMode(mode) },
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RadioButton(selected = state.themeMode == mode, onClick = null)
+                Text(mode.displayName, modifier = Modifier.padding(top = 12.dp))
+            }
+        }
+        state.themeMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        HorizontalDivider()
+        Text("API 设置", style = MaterialTheme.typography.titleLarge)
+        OutlinedTextField(profileName, { profileName = it }, label = { Text("配置名称") },
+            isError = profileName.isBlank(), modifier = Modifier.fillMaxWidth())
         Text("阅读文章会发送至您配置的第三方 API 服务。测试连接使用下方当前参数，可能产生调用费用。",
             style = MaterialTheme.typography.bodySmall)
         OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("API Base URL") }, modifier = Modifier.fillMaxWidth())
@@ -616,12 +692,19 @@ private fun SettingsPage(state: ReaderState, model: ReaderViewModel, modifier: M
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             isError = readTimeout.toIntOrNull()?.let { it in 30..600 } != true,
             modifier = Modifier.fillMaxWidth())
-        Button(onClick = { model.saveSettings(draft, newApiKey, deleteApiKey) }, enabled = valid,
+        Button(onClick = { selectedProfile?.let {
+            model.saveSettings(it.id, profileName, draft, newApiKey, deleteApiKey)
+        } }, enabled = valid,
             modifier = Modifier.fillMaxWidth()) { Text("保存配置") }
         OutlinedButton(onClick = { model.testConnection(draft, newApiKey, deleteApiKey) },
             enabled = valid && !state.testingConnection, modifier = Modifier.fillMaxWidth()) {
             Text(if (state.testingConnection) "正在测试连接…" else "测试连接")
         }
         state.settingsMessage?.let { Text(it) }
+    }
+    pendingDelete?.let { profile ->
+        ConfirmModeActionDialog("删除 API 配置？", "将删除“${profile.name}”及其独立保存的密钥。",
+            onConfirm = { model.deleteApiProfile(profile.id); pendingDelete = null },
+            onDismiss = { pendingDelete = null })
     }
 }

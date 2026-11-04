@@ -13,8 +13,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.Call
 
@@ -49,6 +52,9 @@ data class ReaderState(
     val article: String = "",
     val preprocessOptions: PreprocessOptions = PreprocessOptions(),
     val settings: ApiSettings = ApiSettings(),
+    val apiProfiles: List<ApiProfile> = emptyList(),
+    val selectedApiProfileId: String? = null,
+    val apiProfilesError: String? = null,
     val result: String = "",
     val status: ReadingStatus = ReadingStatus.Idle,
     val readingError: String? = null,
@@ -56,6 +62,8 @@ data class ReaderState(
     val settingsMessage: String? = null,
     val resultActionMessage: String? = null,
     val htmlFontSizePx: Int = 24,
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val themeMessage: String? = null,
     val testingConnection: Boolean = false,
     val storageError: String? = null,
     val loaded: Boolean = false
@@ -68,19 +76,28 @@ data class FinalRequestPreview(
     val userMessage: String
 )
 
+private data class HtmlCacheEntry(
+    val markdown: String,
+    val fontSizePx: Int,
+    val theme: HtmlDocumentTheme,
+    val html: String
+)
+
 class ReaderViewModel(application: Application) : AndroidViewModel(application) {
     private val context = application.applicationContext
     private val preprocessSettings = PreprocessSettingsStore(context.dataStore)
     private val htmlSettings = HtmlSettingsStore(context.dataStore)
+    private val themeSettings = ThemeSettingsStore(context.dataStore)
+    private val themeSaveMutex = Mutex()
     private val htmlConverter = MarkdownHtmlConverter()
     private val promptRepository = PromptRepository(context.dataStore) { file ->
         context.assets.open("prompts/$file").bufferedReader(Charsets.UTF_8).use { it.readText() }
     }
-    private val apiSettingsRepository = ApiSettingsRepository(context.dataStore, AndroidKeystoreApiKeyCipher())
+    private val apiProfilesRepository = ApiProfilesRepository(context.dataStore, AndroidKeystoreApiKeyCipher())
     private val client = OpenAiCompatibleClient()
     private val _state = MutableStateFlow(ReaderState())
     val state: StateFlow<ReaderState> = _state
-    private var apiKey: String? = null
+    private var selectedApiKey: String? = null
     private var readingJob: Job? = null
     @Volatile private var readingCall: Call? = null
     private var testJob: Job? = null
@@ -89,19 +106,32 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private var accumulated = StringBuilder()
     private var pendingExport: String? = null
     private var pendingHtmlExport: String? = null
-    private var cachedHtml: Triple<String, Int, String>? = null
+    private var cachedHtml: HtmlCacheEntry? = null
 
     init { viewModelScope.launch { load() } }
 
     private suspend fun load() {
         try {
-            val loadedSettings = apiSettingsRepository.load()
-            apiKey = loadedSettings.apiKey
+            try {
+                apiProfilesRepository.migrateIfNeeded()
+                applyApiCatalog(apiProfilesRepository.catalogs.first())
+                viewModelScope.launch {
+                    try { apiProfilesRepository.catalogs.collectLatest(::applyApiCatalog) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) {
+                        _state.value = _state.value.copy(apiProfilesError = "API 配置数据无法读取，原数据未被覆盖。")
+                    }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                _state.value = _state.value.copy(apiProfilesError = "API 配置迁移或读取失败，原数据未被覆盖。")
+            }
             val options = preprocessSettings.options.first()
             val htmlFontSize = htmlSettings.fontSizePx.first()
+            val themeMode = themeSettings.mode.first()
             promptRepository.migrateIfNeeded()
-            _state.value = _state.value.copy(settings = toUiSettings(loadedSettings), preprocessOptions = options,
-                htmlFontSizePx = htmlFontSize)
+            _state.value = _state.value.copy(preprocessOptions = options,
+                htmlFontSizePx = htmlFontSize, themeMode = themeMode)
             promptRepository.catalogs.collect { catalog ->
                 _state.value = _state.value.copy(
                     modes = catalog.modes, selectedModeId = catalog.selectedModeId, loaded = true
@@ -116,24 +146,34 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun toUiSettings(loaded: LoadedApiSettings): ApiSettings = ApiSettings(
-        baseUrl = loaded.config.baseUrl,
-        modelId = loaded.config.modelId,
-        temperature = loaded.config.temperature.toString(),
-        maxOutputTokens = loaded.config.maxOutputTokens.toString(),
-        streaming = loaded.config.streaming,
-        sendTemperature = loaded.config.sendTemperature,
-        useMaxCompletionTokens = loaded.config.useMaxCompletionTokens,
-        allowHttp = loaded.config.allowHttp,
-        hasApiKey = !loaded.apiKey.isNullOrEmpty(),
-        keyNeedsReentry = loaded.requiresKeyReentry,
-        autoRetry = loaded.config.network.autoRetry,
-        maxRetries = loaded.config.network.maxRetries.toString(),
-        connectTimeoutSeconds = loaded.config.network.connectTimeoutSeconds.toString(),
-        readTimeoutSeconds = loaded.config.network.readTimeoutSeconds.toString(),
-        retryHttp504 = loaded.config.network.retryHttp504,
-        sendReasoningEffort = loaded.config.reasoning.sendReasoningEffort,
-        reasoningEffort = loaded.config.reasoning.reasoningEffort
+    private suspend fun applyApiCatalog(catalog: ApiProfileCatalog) {
+        val profile = catalog.selected
+        val key = withContext(Dispatchers.IO) { apiProfilesRepository.loadKey(profile.id) }
+        selectedApiKey = key.value
+        _state.value = _state.value.copy(apiProfiles = catalog.profiles,
+            selectedApiProfileId = profile.id,
+            settings = toUiSettings(profile.config, key.value != null, key.needsReentry),
+            apiProfilesError = null)
+    }
+
+    private fun toUiSettings(config: ApiConfig, hasKey: Boolean, keyNeedsReentry: Boolean): ApiSettings = ApiSettings(
+        baseUrl = config.baseUrl,
+        modelId = config.modelId,
+        temperature = config.temperature.toString(),
+        maxOutputTokens = config.maxOutputTokens.toString(),
+        streaming = config.streaming,
+        sendTemperature = config.sendTemperature,
+        useMaxCompletionTokens = config.useMaxCompletionTokens,
+        allowHttp = config.allowHttp,
+        hasApiKey = hasKey,
+        keyNeedsReentry = keyNeedsReentry,
+        autoRetry = config.network.autoRetry,
+        maxRetries = config.network.maxRetries.toString(),
+        connectTimeoutSeconds = config.network.connectTimeoutSeconds.toString(),
+        readTimeoutSeconds = config.network.readTimeoutSeconds.toString(),
+        retryHttp504 = config.network.retryHttp504,
+        sendReasoningEffort = config.reasoning.sendReasoningEffort,
+        reasoningEffort = config.reasoning.reasoningEffort
     )
 
     private fun configFrom(settings: ApiSettings): ApiConfig {
@@ -160,6 +200,21 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun clearStorageError() { _state.value = _state.value.copy(storageError = null) }
+    fun setThemeMode(mode: ThemeMode) {
+        _state.value = _state.value.copy(themeMode = mode, themeMessage = null)
+        viewModelScope.launch {
+            try {
+                themeSaveMutex.withLock {
+                    if (_state.value.themeMode == mode) themeSettings.save(mode)
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (_state.value.themeMode == mode) {
+                    _state.value = _state.value.copy(themeMessage = "主题设置保存失败，请重试。")
+                }
+            }
+        }
+    }
     fun selectMode(id: String) = viewModelScope.launch {
         try { promptRepository.select(id) }
         catch (cancelled: CancellationException) { throw cancelled }
@@ -187,7 +242,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val snapshot = _state.value
         if (snapshot.article.isBlank()) { readingError("请先输入文章。"); return }
         val request = finalRequestPreview(snapshot) ?: run { readingError("请选择有效的阅读模式。"); return }
-        val key = apiKey?.takeIf { it.isNotBlank() } ?: run { readingError("请先配置 API Key。"); return }
+        val key = selectedApiKey?.takeIf { it.isNotBlank() }
+            ?: run { readingError("请先为当前 API 配置填写 API Key。"); return }
         val config = try { configFrom(snapshot.settings) }
         catch (error: Exception) { readingError(ApiErrorMapper.message(error)); return }
         try { client.validate(config, key) }
@@ -324,13 +380,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    suspend fun htmlForCurrentResult(fontSizePx: Int = _state.value.htmlFontSizePx): String? {
+    suspend fun htmlForCurrentResult(fontSizePx: Int = _state.value.htmlFontSizePx,
+                                     theme: HtmlDocumentTheme = HtmlDocumentTheme.AUTO): String? {
         val snapshot = _state.value
         if (snapshot.result.isEmpty() || snapshot.status != ReadingStatus.Completed) return null
-        cachedHtml?.takeIf { it.first == snapshot.result && it.second == fontSizePx }?.let { return it.third }
+        cachedHtml?.takeIf { it.markdown == snapshot.result && it.fontSizePx == fontSizePx &&
+            it.theme == theme }?.let { return it.html }
         return withContext(Dispatchers.Default) {
-            htmlConverter.convert(snapshot.result, fontSizePx)
-        }.also { cachedHtml = Triple(snapshot.result, fontSizePx, it) }
+            htmlConverter.convert(snapshot.result, fontSizePx, theme)
+        }.also { cachedHtml = HtmlCacheEntry(snapshot.result, fontSizePx, theme, it) }
     }
 
     suspend fun prepareHtmlExport(): Boolean {
@@ -388,13 +446,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         _state.value = _state.value.copy(resultActionMessage = message)
     }
 
-    fun saveSettings(settings: ApiSettings, newKey: String, deleteKey: Boolean) {
+    fun saveSettings(profileId: String, name: String, settings: ApiSettings,
+                     newKey: String, deleteKey: Boolean) {
         viewModelScope.launch {
             try {
                 val config = configFrom(settings)
-                val loaded = apiSettingsRepository.save(config, newKey.takeIf { it.isNotBlank() }, deleteKey)
-                apiKey = loaded.apiKey
-                _state.value = _state.value.copy(settings = toUiSettings(loaded), settingsMessage = "API 配置已保存。")
+                apiProfilesRepository.save(profileId, name, config, newKey, deleteKey)
+                _state.value = _state.value.copy(settingsMessage = "API 配置已保存。")
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 _state.value = _state.value.copy(settingsMessage = ApiErrorMapper.message(error))
@@ -404,7 +462,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun testConnection(settings: ApiSettings, newKey: String, deleteKey: Boolean) {
         if (testJob?.isActive == true) return
-        val key = if (newKey.isNotBlank()) newKey else if (deleteKey) null else apiKey
+        val key = if (newKey.isNotBlank()) newKey else if (deleteKey) null else selectedApiKey
         if (key.isNullOrBlank()) {
             _state.value = _state.value.copy(settingsMessage = "请先输入 API Key，再测试连接。")
             return
@@ -428,6 +486,32 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 _state.value = _state.value.copy(testingConnection = false)
             }
         }
+    }
+
+    fun selectApiProfile(id: String) = viewModelScope.launch {
+        try { apiProfilesRepository.select(id) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { _state.value = _state.value.copy(settingsMessage = "无法切换 API 配置。") }
+    }
+
+    fun addApiProfile() = viewModelScope.launch {
+        try { apiProfilesRepository.add("新 API 配置") }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { _state.value = _state.value.copy(settingsMessage = "无法新增 API 配置。") }
+    }
+
+    fun copyApiProfile(id: String, name: String) = viewModelScope.launch {
+        try {
+            apiProfilesRepository.copy(id, "$name 副本")
+            _state.value = _state.value.copy(settingsMessage = "已复制配置参数；API Key 未复制。")
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { _state.value = _state.value.copy(settingsMessage = "无法复制 API 配置。") }
+    }
+
+    fun deleteApiProfile(id: String) = viewModelScope.launch {
+        try { apiProfilesRepository.delete(id) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { _state.value = _state.value.copy(settingsMessage = "无法删除 API 配置。") }
     }
 
     suspend fun saveMode(id: String?, name: String, prompt: String): Boolean = try {

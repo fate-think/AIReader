@@ -68,4 +68,23 @@ class MarkdownHtmlConverterTest {
         assertTrue(html.contains("第500节"))
         assertTrue(html.contains("内容500"))
     }
+
+    @Test fun previewThemeIsFixedButExportAdaptsToBrowser() {
+        val markdown = "# 阅读报告\n\n正文与 `代码`、[链接](https://example.com)。"
+        val light = converter.convert(markdown, 24, HtmlDocumentTheme.LIGHT)
+        val dark = converter.convert(markdown, 24, HtmlDocumentTheme.DARK)
+        val exported = converter.convert(markdown, 24)
+        assertTrue(light.contains("color-scheme: light;"))
+        assertTrue(light.contains("--page-bg:#ffffff"))
+        assertFalse(light.contains("prefers-color-scheme"))
+        assertTrue(dark.contains("color-scheme: dark;"))
+        assertTrue(dark.contains("--page-bg:#17191c"))
+        assertTrue(dark.contains("--text-color:#e8e8e8"))
+        assertFalse(dark.contains("prefers-color-scheme"))
+        assertTrue(exported.contains("color-scheme: light dark;"))
+        assertTrue(exported.contains("@media (prefers-color-scheme: dark)"))
+        fun body(html: String) = html.substringAfter("<body>\n").substringBefore("</body>")
+        assertEquals(body(light), body(dark))
+        assertEquals(body(light), body(exported))
+    }
 }

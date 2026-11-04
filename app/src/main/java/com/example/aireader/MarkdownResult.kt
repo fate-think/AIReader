@@ -1,6 +1,7 @@
 package com.example.aireader
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -176,7 +177,8 @@ private fun MarkdownTable(node: TableBlock) {
                 cells.forEach { cell ->
                     InlineMarkdown(cell, MaterialTheme.typography.bodySmall.copy(
                         fontWeight = if (rowIndex == 0) FontWeight.Bold else FontWeight.Normal),
-                        Modifier.width(170.dp).padding(8.dp))
+                        Modifier.width(170.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                            .padding(8.dp))
                 }
             }
             HorizontalDivider()
@@ -188,7 +190,10 @@ private fun MarkdownTable(node: TableBlock) {
 private fun InlineMarkdown(node: Node, style: TextStyle, modifier: Modifier = Modifier) {
     val uriHandler = LocalUriHandler.current
     val linkColor = MaterialTheme.colorScheme.primary
-    val text = remember(node, linkColor) { annotatedInline(node, linkColor) }
+    val codeBackground = MaterialTheme.colorScheme.surfaceVariant
+    val text = remember(node, linkColor, codeBackground) {
+        annotatedInline(node, linkColor, codeBackground)
+    }
     ClickableText(text = text, modifier = modifier, style = style.copy(color = MaterialTheme.colorScheme.onSurface)) {
         text.getStringAnnotations("url", it, it).firstOrNull()?.item?.let { url ->
             try { uriHandler.openUri(url) } catch (_: Exception) { /* No suitable app for this link. */ }
@@ -196,13 +201,14 @@ private fun InlineMarkdown(node: Node, style: TextStyle, modifier: Modifier = Mo
     }
 }
 
-private fun annotatedInline(node: Node, linkColor: androidx.compose.ui.graphics.Color): AnnotatedString =
+private fun annotatedInline(node: Node, linkColor: androidx.compose.ui.graphics.Color,
+                            codeBackground: androidx.compose.ui.graphics.Color): AnnotatedString =
     buildAnnotatedString {
         fun appendNode(current: Node) {
             when (current) {
                 is MarkdownText -> append(current.literal)
                 is Code -> {
-                    pushStyle(SpanStyle(fontFamily = FontFamily.Monospace))
+                    pushStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = codeBackground))
                     append(current.literal)
                     pop()
                 }
