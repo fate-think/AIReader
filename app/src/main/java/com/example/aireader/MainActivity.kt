@@ -26,8 +26,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -64,7 +63,9 @@ class MainActivity : ComponentActivity() {
 private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
     val historyModel: ReadingHistoryViewModel = viewModel()
     val historyState by historyModel.state.collectAsStateWithLifecycle()
-    var page by rememberSaveable { mutableStateOf(0) }
+    var page by rememberSaveable { mutableStateOf(BottomTab.READING.index) }
+    var settingsDestination by rememberSaveable { mutableStateOf(SettingsDestination.HOME) }
+    var apiEditorId by rememberSaveable { mutableStateOf<String?>(null) }
     var historyId by rememberSaveable { mutableStateOf<String?>(null) }
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     var creating by rememberSaveable { mutableStateOf(false) }
@@ -73,12 +74,25 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
     var historyPreviewMarkdown by remember { mutableStateOf<String?>(null) }
     var historyPreviewHtml by remember { mutableStateOf<String?>(null) }
     val previewTheme = if (useDark) HtmlDocumentTheme.DARK else HtmlDocumentTheme.LIGHT
-    LaunchedEffect(page, historyId) {
-        if (page == 3 && historyId != null) historyModel.open(historyId!!)
+    LaunchedEffect(page, settingsDestination, historyId) {
+        if (historyId != null && (page == BottomTab.HISTORY.index ||
+                page == BottomTab.SETTINGS.index && settingsDestination == SettingsDestination.HISTORY_DETAIL)) {
+            historyModel.open(historyId!!)
+        }
         else historyModel.closeDetail()
     }
-    BackHandler(enabled = page == 3 && historyId != null && historyPreviewMarkdown == null) {
-        historyId = null
+    val goBackSettings: () -> Unit = {
+        settingsDestination = settingsDestination.parent() ?: SettingsDestination.HOME
+        if (settingsDestination != SettingsDestination.HISTORY_DETAIL) historyId = null
+        if (settingsDestination != SettingsDestination.API_EDIT) apiEditorId = null
+    }
+    val editorReady = state.selectedApiProfileId == apiEditorId && apiEditorId != null
+    BackHandler(enabled = page == BottomTab.HISTORY.index && historyId != null &&
+        historyPreviewMarkdown == null) { historyId = null }
+    BackHandler(enabled = page == BottomTab.SETTINGS.index && settingsDestination != SettingsDestination.HOME &&
+        (settingsDestination != SettingsDestination.API_EDIT || !editorReady) &&
+        historyPreviewMarkdown == null) {
+        goBackSettings()
     }
     LaunchedEffect(historyPreviewMarkdown, previewTheme, state.htmlFontSizePx) {
         val markdown = historyPreviewMarkdown
@@ -129,31 +143,69 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 2.dp
         ) {
-            Text(when { creating || editingId != null -> "编辑阅读模式"; page == 0 -> "AI 阅读助手";
-                page == 1 -> "提示词管理"; page == 2 -> "API 设置";
-                historyId != null -> "历史报告"; else -> "阅读历史" },
-                style = MaterialTheme.typography.headlineSmall,
-                modifier = Modifier.statusBarsPadding().padding(20.dp))
+            Row(modifier = Modifier.statusBarsPadding().padding(horizontal = 12.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                if (page == BottomTab.SETTINGS.index && settingsDestination != SettingsDestination.HOME &&
+                    (settingsDestination != SettingsDestination.API_EDIT || !editorReady)) {
+                    TextButton(onClick = goBackSettings) { Text("‹ 返回") }
+                }
+                Text(when { creating || editingId != null -> "编辑阅读模式";
+                    page == BottomTab.READING.index -> "AI 阅读助手";
+                    page == BottomTab.PROMPTS.index -> "提示词管理";
+                    page == BottomTab.HISTORY.index -> if (historyId == null) "阅读历史" else "历史报告";
+                    else -> settingsDestination.title }, style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         } },
-        bottomBar = { if (!creating && editingId == null) NavigationBar {
-            listOf("阅读", "提示词", "设置", "历史").forEachIndexed { index, label ->
-                NavigationBarItem(selected = page == index, onClick = {
-                    page = index
-                    if (index != 3) historyId = null
-                }, icon = { Text(listOf("◉", "✎", "⚙", "▤")[index]) }, label = { Text(label) })
+        bottomBar = { if (!creating && editingId == null &&
+            !(page == BottomTab.SETTINGS.index && settingsDestination == SettingsDestination.API_EDIT)) NavigationBar {
+            BottomTab.entries.forEach { tab ->
+                NavigationBarItem(selected = page == tab.index, onClick = {
+                    page = tab.index
+                    settingsDestination = SettingsDestination.HOME
+                    historyId = null
+                    apiEditorId = null
+                }, icon = { Text(tab.icon) }, label = { Text(tab.title, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis) }, alwaysShowLabel = true)
             }
         } }
     ) { padding ->
         val modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp)
-        val historyModifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)
+        val nestedModifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)
         when {
             !state.loaded -> Box(modifier) { CircularProgressIndicator() }
-            page == 3 && historyId != null -> ReadingHistoryDetailScreen(historyState, historyModel,
-                onBack = { historyId = null },
+            page == BottomTab.HISTORY.index && historyId != null -> ReadingHistoryDetailScreen(
+                historyState, historyModel, onBack = { historyId = null },
                 onPreviewHtml = { historyPreviewMarkdown = it },
-                fontSizePx = state.htmlFontSizePx, modifier = historyModifier)
-            page == 3 -> ReadingHistoryListScreen(historyState, historyModel,
-                onOpen = { historyId = it }, modifier = historyModifier)
+                fontSizePx = state.htmlFontSizePx, modifier = nestedModifier)
+            page == BottomTab.HISTORY.index -> ReadingHistoryListScreen(historyState, historyModel,
+                onOpen = { historyId = it }, modifier = nestedModifier)
+            page == BottomTab.SETTINGS.index -> when (settingsDestination) {
+                SettingsDestination.HOME -> SettingsHomeScreen(
+                    onOpen = { settingsDestination = it }, modifier = nestedModifier)
+                SettingsDestination.API_LIST -> ApiSettingsList(state, model,
+                    onEdit = { id -> apiEditorId = id; settingsDestination = SettingsDestination.API_EDIT },
+                    modifier = nestedModifier)
+                SettingsDestination.API_EDIT -> if (editorReady) ApiSettingsEditor(state, model,
+                    onBack = goBackSettings, modifier = modifier)
+                    else Box(nestedModifier) {
+                        if (state.apiProfilesError != null || state.settingsMessage?.startsWith("无法切换") == true)
+                            Text(state.apiProfilesError ?: state.settingsMessage.orEmpty())
+                        else CircularProgressIndicator()
+                    }
+                SettingsDestination.APPEARANCE -> AppearanceSettingsScreen(state, model, modifier)
+                SettingsDestination.HISTORY_DATA -> HistoryDataSettingsScreen(state, model,
+                    historyModel, historyState,
+                    onOpenHistory = { settingsDestination = SettingsDestination.HISTORY_LIST },
+                    modifier = modifier)
+                SettingsDestination.HISTORY_LIST -> ReadingHistoryListScreen(historyState, historyModel,
+                    onOpen = { historyId = it; settingsDestination = SettingsDestination.HISTORY_DETAIL },
+                    modifier = nestedModifier)
+                SettingsDestination.HISTORY_DETAIL -> ReadingHistoryDetailScreen(historyState, historyModel,
+                    onBack = goBackSettings, onPreviewHtml = { historyPreviewMarkdown = it },
+                    fontSizePx = state.htmlFontSizePx, modifier = nestedModifier)
+                SettingsDestination.ABOUT -> AboutScreen(modifier)
+            }
             state.modes.isEmpty() -> Text("提示词数据读取失败：${state.storageError ?: "未知错误"}", modifier = modifier)
             creating || editingId != null -> ModeEditor(
                 mode = state.modes.firstOrNull { it.id == editingId },
@@ -167,11 +219,11 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
                     { model.deleteMode(mode.id); editingId = null }
                 },
                 modifier = modifier)
-            page == 0 -> ReaderPage(state, model, previewTheme,
+            page == BottomTab.READING.index -> ReaderPage(state, model, previewTheme,
                 onHtmlPreview = { htmlPreview = it; previewOpen = true }, modifier = modifier)
-            page == 1 -> ModesPage(state, model, onEdit = { editingId = it },
+            page == BottomTab.PROMPTS.index -> ModesPage(state, model, onEdit = { editingId = it },
                 onAdd = { creating = true }, modifier = modifier)
-            else -> SettingsPage(state, model, historyModel, historyState, modifier)
+            else -> Unit
         }
     }
     if (state.modes.isNotEmpty() && state.storageError != null) {
@@ -505,7 +557,7 @@ private fun ModesPage(state: ReaderState, model: ReaderViewModel, onEdit: (Strin
 }
 
 @Composable
-private fun ConfirmModeActionDialog(title: String, message: String,
+internal fun ConfirmModeActionDialog(title: String, message: String,
                                     onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(onDismissRequest = onDismiss, title = { Text(title) }, text = { Text(message) },
         confirmButton = { TextButton(onClick = onConfirm) { Text("确认") } },
@@ -571,215 +623,4 @@ private fun ModeEditor(mode: ReadingMode?, onSave: suspend (String, String) -> B
         "此模式将被删除，未保存的编辑内容也会丢失。",
         onConfirm = { confirmDelete = false; onDelete() },
         onDismiss = { confirmDelete = false })
-}
-
-@Composable
-private fun SettingsPage(state: ReaderState, model: ReaderViewModel,
-                         historyModel: ReadingHistoryViewModel,
-                         historyState: ReadingHistoryState, modifier: Modifier) {
-    val selectedProfile = state.apiProfiles.firstOrNull { it.id == state.selectedApiProfileId }
-    val initial = state.settings
-    val editorKey = selectedProfile?.id to initial
-    var profileName by remember(selectedProfile?.id) { mutableStateOf(selectedProfile?.name.orEmpty()) }
-    var pendingDelete by remember { mutableStateOf<ApiProfile?>(null) }
-    var confirmClearHistory by remember { mutableStateOf(false) }
-    var baseUrl by remember(editorKey) { mutableStateOf(initial.baseUrl) }
-    var newApiKey by remember(editorKey) { mutableStateOf("") }
-    var showApiKey by remember { mutableStateOf(false) }
-    var deleteApiKey by remember(editorKey) { mutableStateOf(false) }
-    var modelId by remember(editorKey) { mutableStateOf(initial.modelId) }
-    var temperature by remember(editorKey) { mutableStateOf(initial.temperature) }
-    var maxTokens by remember(editorKey) { mutableStateOf(initial.maxOutputTokens) }
-    var streaming by remember(editorKey) { mutableStateOf(initial.streaming) }
-    var sendTemperature by remember(editorKey) { mutableStateOf(initial.sendTemperature) }
-    var useMaxCompletionTokens by remember(editorKey) { mutableStateOf(initial.useMaxCompletionTokens) }
-    var allowHttp by remember(editorKey) { mutableStateOf(initial.allowHttp) }
-    var autoRetry by remember(editorKey) { mutableStateOf(initial.autoRetry) }
-    var retryHttp504 by remember(editorKey) { mutableStateOf(initial.retryHttp504) }
-    var maxRetries by remember(editorKey) { mutableStateOf(initial.maxRetries) }
-    var connectTimeout by remember(editorKey) { mutableStateOf(initial.connectTimeoutSeconds) }
-    var readTimeout by remember(editorKey) { mutableStateOf(initial.readTimeoutSeconds) }
-    var sendReasoningEffort by remember(editorKey) { mutableStateOf(initial.sendReasoningEffort) }
-    var reasoningEffort by remember(editorKey) { mutableStateOf(initial.reasoningEffort) }
-    var reasoningExpanded by remember { mutableStateOf(false) }
-    val draft = ApiSettings(baseUrl, modelId, temperature, maxTokens, streaming,
-        sendTemperature, useMaxCompletionTokens, allowHttp, initial.hasApiKey, initial.keyNeedsReentry,
-        autoRetry, maxRetries, connectTimeout, readTimeout, retryHttp504,
-        sendReasoningEffort, reasoningEffort)
-    val valid = profileName.isNotBlank() && selectedProfile != null &&
-        maxTokens.toIntOrNull()?.let { it > 0 } == true &&
-        (!sendTemperature || temperature.toDoubleOrNull()?.let { it in 0.0..2.0 } == true) &&
-        maxRetries.toIntOrNull()?.let { it in 0..5 } == true &&
-        connectTimeout.toIntOrNull()?.let { it in 10..60 } == true &&
-        readTimeout.toIntOrNull()?.let { it in 30..600 } == true
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("API 配置列表", style = MaterialTheme.typography.titleLarge)
-        state.apiProfilesError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        state.apiProfiles.forEach { profile ->
-            ElevatedCard(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(10.dp)) {
-                    Text("${if (profile.id == state.selectedApiProfileId) "当前 · " else ""}${profile.name}",
-                        style = MaterialTheme.typography.titleMedium)
-                    Text(profile.config.modelId.ifBlank { "未配置模型" },
-                        style = MaterialTheme.typography.bodySmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        TextButton(onClick = { model.selectApiProfile(profile.id) },
-                            enabled = profile.id != state.selectedApiProfileId) { Text("使用 / 编辑") }
-                        TextButton(onClick = { model.copyApiProfile(profile.id, profile.name) }) { Text("复制") }
-                        TextButton(onClick = { pendingDelete = profile },
-                            enabled = state.apiProfiles.size > 1) { Text("删除") }
-                    }
-                }
-            }
-        }
-        OutlinedButton(onClick = { model.addApiProfile() }, modifier = Modifier.fillMaxWidth()) {
-            Text("新增 API 配置")
-        }
-        HorizontalDivider()
-        Text("外观设置", style = MaterialTheme.typography.titleLarge)
-        ThemeMode.entries.forEach { mode ->
-            Row(modifier = Modifier.fillMaxWidth().clickable { model.setThemeMode(mode) },
-                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                RadioButton(selected = state.themeMode == mode, onClick = null)
-                Text(mode.displayName, modifier = Modifier.padding(top = 12.dp))
-            }
-        }
-        state.themeMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        HorizontalDivider()
-        Text("阅读历史", style = MaterialTheme.typography.titleLarge)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("自动保存阅读历史")
-            Switch(checked = state.historyOptions.autoSave, onCheckedChange = {
-                model.saveHistoryOptions(state.historyOptions.copy(autoSave = it))
-            })
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("保存文章原文")
-            Switch(checked = state.historyOptions.saveOriginalArticle,
-                enabled = state.historyOptions.autoSave, onCheckedChange = {
-                    model.saveHistoryOptions(state.historyOptions.copy(saveOriginalArticle = it))
-                })
-        }
-        Text("历史仅保存在本机，应用已禁用 Android 自动备份。卸载应用会删除本机历史；无法保证恢复。",
-            style = MaterialTheme.typography.bodySmall)
-        OutlinedButton(onClick = { confirmClearHistory = true }, modifier = Modifier.fillMaxWidth()) {
-            Text("清空全部阅读历史")
-        }
-        historyState.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        HorizontalDivider()
-        Text("API 设置", style = MaterialTheme.typography.titleLarge)
-        OutlinedTextField(profileName, { profileName = it }, label = { Text("配置名称") },
-            isError = profileName.isBlank(), modifier = Modifier.fillMaxWidth())
-        Text("阅读文章会发送至您配置的第三方 API 服务。测试连接使用下方当前参数，可能产生调用费用。",
-            style = MaterialTheme.typography.bodySmall)
-        OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("API Base URL") }, modifier = Modifier.fillMaxWidth())
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("允许 HTTP Base URL")
-            Switch(checked = allowHttp, onCheckedChange = { allowHttp = it })
-        }
-        if (allowHttp) {
-            Text("HTTP 会以明文传输 API Key 和文章内容，请仅在信任该连接时使用。",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-        }
-        Text(when {
-            initial.keyNeedsReentry -> "原有 API Key 无法解密，请重新输入。"
-            deleteApiKey -> "保存后将删除已配置的 API Key。"
-            initial.hasApiKey -> "API Key：已配置。留空可保留现有密钥。"
-            else -> "API Key：未配置。"
-        })
-        OutlinedTextField(newApiKey, { newApiKey = it; if (it.isNotEmpty()) deleteApiKey = false },
-            label = { Text("新 API Key（留空保留原值）") },
-            visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth())
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = { showApiKey = !showApiKey }) { Text(if (showApiKey) "隐藏密钥" else "显示密钥") }
-            if (initial.hasApiKey || initial.keyNeedsReentry) {
-                TextButton(onClick = { deleteApiKey = !deleteApiKey; if (deleteApiKey) newApiKey = "" }) {
-                    Text(if (deleteApiKey) "取消删除" else "删除现有密钥")
-                }
-            }
-        }
-        OutlinedTextField(modelId, { modelId = it }, label = { Text("Model ID") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(temperature, { temperature = it }, label = { Text("Temperature") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(maxTokens, { maxTokens = it }, label = { Text("Max Output Tokens") }, modifier = Modifier.fillMaxWidth())
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("发送 Temperature 参数")
-            Switch(checked = sendTemperature, onCheckedChange = { sendTemperature = it })
-        }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("使用 max_completion_tokens")
-            Switch(checked = useMaxCompletionTokens, onCheckedChange = { useMaxCompletionTokens = it })
-        }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("流式输出")
-            Switch(checked = streaming, onCheckedChange = { streaming = it })
-        }
-        HorizontalDivider()
-        Text("思考深度", style = MaterialTheme.typography.titleMedium)
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("发送思考深度参数")
-            Switch(checked = sendReasoningEffort, onCheckedChange = { sendReasoningEffort = it })
-        }
-        Text("开启后，向 API 请求添加 reasoning_effort。关闭后不发送该参数，由模型服务端决定默认行为。",
-            style = MaterialTheme.typography.bodySmall)
-        Box {
-            OutlinedButton(onClick = { reasoningExpanded = true }, enabled = sendReasoningEffort,
-                modifier = Modifier.fillMaxWidth()) {
-                Text("思考深度：${reasoningEffort.displayName}")
-            }
-            DropdownMenu(expanded = reasoningExpanded && sendReasoningEffort,
-                onDismissRequest = { reasoningExpanded = false }) {
-                ReasoningEffort.entries.forEach { effort ->
-                    DropdownMenuItem(text = { Text(effort.displayName) }, onClick = {
-                        reasoningEffort = effort
-                        reasoningExpanded = false
-                    })
-                }
-            }
-        }
-        HorizontalDivider()
-        Text("网络稳定性", style = MaterialTheme.typography.titleMedium)
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("自动重试")
-            Switch(checked = autoRetry, onCheckedChange = { autoRetry = it })
-        }
-        Text("仅针对符合条件的临时错误自动重试，可能产生额外 API 调用费用。",
-            style = MaterialTheme.typography.bodySmall)
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("允许重试 504")
-            Switch(checked = retryHttp504, onCheckedChange = { retryHttp504 = it })
-        }
-        Text("504 网关超时不代表上游未执行；开启后可能重复请求和计费。总自动重试关闭时此项不生效。",
-            style = MaterialTheme.typography.bodySmall)
-        OutlinedTextField(maxRetries, { maxRetries = it }, label = { Text("最大重试次数（0–5）") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            isError = maxRetries.toIntOrNull()?.let { it in 0..5 } != true,
-            modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(connectTimeout, { connectTimeout = it }, label = { Text("连接超时（10–60 秒）") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            isError = connectTimeout.toIntOrNull()?.let { it in 10..60 } != true,
-            modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(readTimeout, { readTimeout = it }, label = { Text("读取超时（30–600 秒）") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            isError = readTimeout.toIntOrNull()?.let { it in 30..600 } != true,
-            modifier = Modifier.fillMaxWidth())
-        Button(onClick = { selectedProfile?.let {
-            model.saveSettings(it.id, profileName, draft, newApiKey, deleteApiKey)
-        } }, enabled = valid,
-            modifier = Modifier.fillMaxWidth()) { Text("保存配置") }
-        OutlinedButton(onClick = { model.testConnection(draft, newApiKey, deleteApiKey) },
-            enabled = valid && !state.testingConnection, modifier = Modifier.fillMaxWidth()) {
-            Text(if (state.testingConnection) "正在测试连接…" else "测试连接")
-        }
-        state.settingsMessage?.let { Text(it) }
-    }
-    pendingDelete?.let { profile ->
-        ConfirmModeActionDialog("删除 API 配置？", "将删除“${profile.name}”及其独立保存的密钥。",
-            onConfirm = { model.deleteApiProfile(profile.id); pendingDelete = null },
-            onDismiss = { pendingDelete = null })
-    }
-    if (confirmClearHistory) ConfirmModeActionDialog("确定清空全部阅读历史？",
-        "全部已保存的报告和文章原文将从本机删除，无法恢复。提示词、API 配置及密钥不会改变。",
-        onConfirm = { historyModel.clearAll(); confirmClearHistory = false },
-        onDismiss = { confirmClearHistory = false })
 }

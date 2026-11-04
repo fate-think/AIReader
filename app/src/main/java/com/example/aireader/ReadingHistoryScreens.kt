@@ -1,6 +1,7 @@
 package com.example.aireader
 
 import android.content.Intent
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -162,7 +163,15 @@ fun ReadingHistoryDetailScreen(state: ReadingHistoryState, model: ReadingHistory
         }
     }
     if (showOriginal && record?.originalArticle != null) AlertDialog(
-        onDismissRequest = { showOriginal = false }, title = { Text("原始文章") },
+        onDismissRequest = { showOriginal = false }, title = {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("原始文章", modifier = Modifier.weight(1f))
+                TextButton(onClick = {
+                    clipboard.setText(AnnotatedString(record.originalArticle))
+                    Toast.makeText(context, "原文已复制", Toast.LENGTH_SHORT).show()
+                }) { Text("复制原文") }
+            }
+        },
         text = { Text(record.originalArticle,
             modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp).verticalScroll(rememberScrollState())) },
         confirmButton = { TextButton(onClick = { showOriginal = false }) { Text("关闭") } })

@@ -218,7 +218,7 @@ class PromptRepositoryTest {
         repo.select(custom.id)
         val selected = repo.catalogs.first().modes.single { it.id == custom.id }
         val processed = ArticlePreprocessor.process("第一段。\n第二段。", PreprocessOptions())
-        assertEquals("完整提示词\n末行\n\n{段落1} 第一段。第二段。",
+        assertEquals("完整提示词\n末行\n{段落1} 第一段。第二段。",
             buildUserMessage(selected.prompt, processed))
     } }
 }

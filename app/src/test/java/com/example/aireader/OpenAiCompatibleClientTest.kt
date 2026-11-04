@@ -67,7 +67,8 @@ class OpenAiCompatibleClientTest {
         val messages = body.getJSONArray("messages")
         assertEquals(1, messages.length())
         assertEquals("user", messages.getJSONObject(0).getString("role"))
-        assertEquals("完整提示词\n\n{段落1} 甲。乙。", messages.getJSONObject(0).getString("content"))
+        assertEquals("完整提示词\n{段落1} 甲。乙。", messages.getJSONObject(0).getString("content"))
+        assertEquals(message, messages.getJSONObject(0).getString("content"))
     }
 
     @Test fun temperatureCanBeOmittedAndMaxTokensIsCorrect() {

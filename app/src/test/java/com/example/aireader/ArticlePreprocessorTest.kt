@@ -102,7 +102,7 @@ class ArticlePreprocessorTest {
     @Test fun userMessageContainsOnlyPromptAndProcessedBody() {
         val prompt = "完整提示词\n末行  \n"
         val article = ArticlePreprocessor.process("甲。", PreprocessOptions())
-        assertEquals("完整提示词\n末行\n\n{段落1} 甲。", buildUserMessage(prompt, article))
+        assertEquals("完整提示词\n末行\n{段落1} 甲。", buildUserMessage(prompt, article))
     }
 
     @Test(expected = IllegalArgumentException::class)

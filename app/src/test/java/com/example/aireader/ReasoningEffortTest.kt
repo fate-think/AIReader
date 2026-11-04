@@ -63,7 +63,7 @@ class ReasoningEffortTest {
         val processed = ArticlePreprocessor.process("甲。\n乙。", PreprocessOptions())
         assertEquals("{段落1} 甲。乙。", processed)
         val message = buildUserMessage("提示词\n", processed)
-        assertEquals("提示词\n\n{段落1} 甲。乙。", message)
+        assertEquals("提示词\n{段落1} 甲。乙。", message)
         val body = json(config(ReasoningSettings(true, ReasoningEffort.NONE))
             .copy(useMaxCompletionTokens = true, sendTemperature = false), message)
         assertEquals("none", body.getString("reasoning_effort"))
