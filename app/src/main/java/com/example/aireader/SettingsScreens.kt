@@ -21,10 +21,10 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun SettingsHomeScreen(onOpen: (SettingsDestination) -> Unit, modifier: Modifier = Modifier) {
     val entries = settingsHomeDestinations.map { destination -> when (destination) {
-        SettingsDestination.API_LIST -> Triple(destination, "管理服务商、模型与请求参数", R.drawable.ic_smart_toy)
-        SettingsDestination.APPEARANCE -> Triple(destination, "跟随系统、浅色与深色", R.drawable.ic_dark_mode)
-        SettingsDestination.HISTORY_DATA -> Triple(destination, "历史保存、原文存储与数据清理", R.drawable.ic_history)
-        SettingsDestination.ABOUT -> Triple(destination, "版本信息与应用说明", null)
+        SettingsDestination.API_LIST -> Triple(destination, "模型、思考深度、超时与重试", R.drawable.ic_smart_toy)
+        SettingsDestination.APPEARANCE -> Triple(destination, "跟随系统、浅色、深色", R.drawable.ic_dark_mode)
+        SettingsDestination.HISTORY_DATA -> Triple(destination, "自动保存、原文存储、历史清理", R.drawable.ic_history)
+        SettingsDestination.ABOUT -> Triple(destination, "版本信息、应用说明", null)
         else -> error("不是设置首页菜单")
     } }
     LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(12.dp),
