@@ -15,6 +15,7 @@ data class HistoryCapture(
     val modelId: String,
     val apiConfigName: String,
     val options: HistorySaveOptions,
+    val finalUserMessage: String,
     val createdAt: Long
 ) {
     fun onEvent(event: ReadingEvent, report: String): ReadingHistoryEntity? =
@@ -24,14 +25,16 @@ data class HistoryCapture(
         if (!options.autoSave || report.isBlank()) return null
         return ReadingHistoryEntity(requestId, titleFromArticle(originalArticle),
             if (options.saveOriginalArticle) originalArticle else null, report,
-            readingModeId, readingModeName, modelId, apiConfigName, createdAt, createdAt)
+            readingModeId, readingModeName, modelId, apiConfigName, createdAt, createdAt,
+            if (options.saveOriginalArticle) finalUserMessage else null)
     }
 
     companion object {
         fun start(article: String, mode: ReadingMode, modelId: String, apiName: String,
-                  options: HistorySaveOptions, now: Long = System.currentTimeMillis()): HistoryCapture =
+                  options: HistorySaveOptions, finalUserMessage: String,
+                  now: Long = System.currentTimeMillis()): HistoryCapture =
             HistoryCapture(UUID.randomUUID().toString(), article, mode.id, mode.name, modelId,
-                apiName, options, now)
+                apiName, options, finalUserMessage, now)
 
         fun titleFromArticle(article: String): String = article.lineSequence()
             .map { it.trim() }.firstOrNull { it.isNotEmpty() }

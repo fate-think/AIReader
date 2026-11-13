@@ -112,7 +112,7 @@ class MarkdownWorkspaceTest {
     @Test fun editingCompletedAiReportDoesNotChangeItsHistorySnapshot() {
         val mode = ReadingMode("mode", "阅读模式", "提示词", false)
         val capture = HistoryCapture.start("文章原文。", mode, "model", "api",
-            HistorySaveOptions(), now = 100L)
+            HistorySaveOptions(), "提示词\n文章原文。", now = 100L)
         val saved = capture.onEvent(ReadingEvent.Finished, "# AI 原始报告")!!
         val workspace = ReaderState(result = "# AI 原始报告", markdownSource = MarkdownSource.AI,
             status = ReadingStatus.Completed).withEditedMarkdown("# 手动修改报告")

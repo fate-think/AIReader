@@ -138,8 +138,9 @@ paraOnce = 3
 
 - 成功完成的报告使用 Room 本地保存；`requestId` 是历史主键，重复完成事件只能插入一次。失败、取消和未完成流不得保存。
 - 自动保存和保存原文开关位于现有 DataStore，默认均开启；请求开始时固定设置、原文、阅读模式名称、模型和 API 配置名称快照。
-- 历史列表只查询摘要，详情按 ID 读取完整内容；历史记录不保存 API Key、提示词正文或完整请求。
+- 历史列表只查询摘要，详情按 ID 读取完整内容；新历史仅在“保存文章原文”开启时保存实际发送的完整 User Message 快照，关闭时存为 null。旧历史没有此快照，不得用当前设置重新构造。历史记录不保存 API Key 或认证信息。
 - 数据库升级必须添加显式 Migration，不使用无条件 destructive migration。现有全局 `allowBackup=false` 保持不变。
+- 当前 Room 版本 2，`MIGRATION_1_2` 为历史表添加可空的 `finalUserMessage` 列，旧记录保持 null。
 - 历史删除只操作 Room，不影响提示词、API 配置或 DataStore。Android 设备测试放在 `androidTest`，本地云服务器不运行 Android 构建。
 
 ## 设置导航（第九阶段）

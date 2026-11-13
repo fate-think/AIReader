@@ -101,10 +101,12 @@ fun ReadingHistoryDetailScreen(state: ReadingHistoryState, model: ReadingHistory
     val scope = rememberCoroutineScope()
     val scrollState = rememberLazyListState()
     var showOriginal by remember { mutableStateOf(false) }
+    var showFinalMessage by remember { mutableStateOf(false) }
     var rename by remember { mutableStateOf(false) }
     var titleDraft by remember(record?.id, rename) { mutableStateOf(record?.title.orEmpty()) }
     var confirmDelete by remember { mutableStateOf(false) }
     var exportingHtml by remember { mutableStateOf(false) }
+    var openingBrowser by remember { mutableStateOf(false) }
     val markdownLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/markdown")) {
         model.completeMarkdownExport(it)
     }
@@ -128,6 +130,7 @@ fun ReadingHistoryDetailScreen(state: ReadingHistoryState, model: ReadingHistory
             if (record.originalArticle != null) TextButton(onClick = { showOriginal = true }) { Text("查看原文") }
             TextButton(onClick = { confirmDelete = true }) { Text("删除") }
         }
+        TextButton(onClick = { showFinalMessage = true }) { Text("查看最终发送内容") }
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             TextButton(onClick = { clipboard.setText(AnnotatedString(record.markdownResult)) }) { Text("复制") }
             TextButton(onClick = {
@@ -156,25 +159,33 @@ fun ReadingHistoryDetailScreen(state: ReadingHistoryState, model: ReadingHistory
                 }
             }, enabled = !exportingHtml) { Text(if (exportingHtml) "转换中…" else "保存 HTML") }
         }
+        TextButton(onClick = {
+            openingBrowser = true
+            scope.launch {
+                try {
+                    model.browserHtmlUri(record.markdownResult, fontSizePx)?.let { uri ->
+                        try { HtmlBrowser.open(context, uri) }
+                        catch (_: Exception) {
+                            model.reportFailure("浏览器可能不支持直接打开此文件。可使用 HTML 预览，或保存 HTML 后用支持本地文件的浏览器打开。")
+                        }
+                    }
+                } finally { openingBrowser = false }
+            }
+        }, enabled = !openingBrowser) { Text(if (openingBrowser) "转换中…" else "浏览器打开") }
         state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         HorizontalDivider()
         Box(Modifier.weight(1f)) {
             MarkdownResult(record.markdownResult, scrollState, streaming = false)
         }
     }
-    if (showOriginal && record?.originalArticle != null) AlertDialog(
-        onDismissRequest = { showOriginal = false }, title = {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("原始文章", modifier = Modifier.weight(1f))
-                TextButton(onClick = {
-                    clipboard.setText(AnnotatedString(record.originalArticle))
-                    Toast.makeText(context, "原文已复制", Toast.LENGTH_SHORT).show()
-                }) { Text("复制原文") }
-            }
-        },
-        text = { Text(record.originalArticle,
-            modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp).verticalScroll(rememberScrollState())) },
-        confirmButton = { TextButton(onClick = { showOriginal = false }) { Text("关闭") } })
+    if (showOriginal && record?.originalArticle != null) HistoryTextDialog(
+        title = "原始文章", content = record.originalArticle, copyLabel = "复制原文",
+        copiedMessage = "原文已复制", onDismiss = { showOriginal = false })
+    if (showFinalMessage && record != null) HistoryTextDialog(
+        title = "最终发送内容",
+        content = record.finalUserMessage ?: "该历史记录未保存最终发送内容。",
+        copyLabel = if (record.finalUserMessage == null) null else "复制全部内容",
+        copiedMessage = "最终发送内容已复制", onDismiss = { showFinalMessage = false })
     if (rename && record != null) AlertDialog(onDismissRequest = { rename = false },
         title = { Text("修改历史标题") },
         text = { OutlinedTextField(titleDraft, { titleDraft = it }, label = { Text("标题") }) },
@@ -191,4 +202,22 @@ fun ReadingHistoryDetailScreen(state: ReadingHistoryState, model: ReadingHistory
             confirmDelete = false
         }) { Text("删除") } },
         dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消") } })
+}
+
+@Composable
+private fun HistoryTextDialog(title: String, content: String, copyLabel: String?,
+                              copiedMessage: String, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    AlertDialog(onDismissRequest = onDismiss, title = {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(title, modifier = Modifier.weight(1f))
+            if (copyLabel != null) TextButton(onClick = {
+                clipboard.setText(AnnotatedString(content))
+                Toast.makeText(context, copiedMessage, Toast.LENGTH_SHORT).show()
+            }) { Text(copyLabel) }
+        }
+    }, text = { Text(content,
+        modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp).verticalScroll(rememberScrollState())) },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } })
 }
