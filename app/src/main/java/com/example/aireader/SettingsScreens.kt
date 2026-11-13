@@ -7,15 +7,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ChevronRight
-import androidx.compose.material.icons.outlined.DarkMode
-import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -24,10 +21,10 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun SettingsHomeScreen(onOpen: (SettingsDestination) -> Unit, modifier: Modifier = Modifier) {
     val entries = settingsHomeDestinations.map { destination -> when (destination) {
-        SettingsDestination.API_LIST -> Triple(destination, "管理服务商、模型与请求参数", Icons.Outlined.SmartToy)
-        SettingsDestination.APPEARANCE -> Triple(destination, "跟随系统、浅色与深色", Icons.Outlined.DarkMode)
-        SettingsDestination.HISTORY_DATA -> Triple(destination, "历史保存、原文存储与数据清理", Icons.Outlined.History)
-        SettingsDestination.ABOUT -> Triple(destination, "版本信息与应用说明", Icons.Outlined.Info)
+        SettingsDestination.API_LIST -> Triple(destination, "模型、思考深度、超时与重试", R.drawable.ic_smart_toy)
+        SettingsDestination.APPEARANCE -> Triple(destination, "跟随系统、浅色、深色", R.drawable.ic_dark_mode)
+        SettingsDestination.HISTORY_DATA -> Triple(destination, "自动保存、原文存储、历史清理", R.drawable.ic_history)
+        SettingsDestination.ABOUT -> Triple(destination, "版本信息、应用说明", null)
         else -> error("不是设置首页菜单")
     } }
     LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -36,8 +33,11 @@ fun SettingsHomeScreen(onOpen: (SettingsDestination) -> Unit, modifier: Modifier
             ElevatedCard(modifier = Modifier.fillMaxWidth().clickable { onOpen(destination) }) {
                 ListItem(headlineContent = { Text(destination.title) },
                     supportingContent = { Text(description) },
-                    leadingContent = { Icon(icon, contentDescription = null) },
-                    trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) })
+                    leadingContent = {
+                        if (icon == null) Icon(Icons.Outlined.Info, contentDescription = null)
+                        else Icon(painterResource(icon), contentDescription = null)
+                    },
+                    trailingContent = { Icon(painterResource(R.drawable.ic_chevron_right), contentDescription = null) })
             }
         }
     }

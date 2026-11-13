@@ -57,6 +57,8 @@ data class ReaderState(
     val selectedApiProfileId: String? = null,
     val apiProfilesError: String? = null,
     val result: String = "",
+    val markdownSource: MarkdownSource = MarkdownSource.NONE,
+    val markdownViewMode: MarkdownViewMode = MarkdownViewMode.EDIT,
     val status: ReadingStatus = ReadingStatus.Idle,
     val readingError: String? = null,
     val retryMessage: String? = null,
@@ -261,9 +263,23 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         return FinalRequestPreview(mode.name, mode.prompt, processed, buildUserMessage(mode.prompt, processed))
     }
 
-    fun startReading() {
+    fun setMarkdown(text: String) {
+        val current = _state.value
+        if (readingJob?.isActive == true || current.result == text) return
+        cachedHtml = null
+        _state.value = current.withEditedMarkdown(text)
+    }
+
+    fun setMarkdownViewMode(mode: MarkdownViewMode) {
+        if (readingJob?.isActive == true) return
+        _state.value = _state.value.copy(markdownViewMode = mode)
+    }
+
+    fun startReading(confirmedOverwrite: Boolean = false) {
         if (readingJob?.isActive == true) return
         val snapshot = _state.value
+        if (!confirmedOverwrite && MarkdownWorkspace.requiresOverwriteConfirmation(
+                snapshot.result, snapshot.markdownSource)) return
         if (snapshot.article.isBlank()) { readingError("请先输入文章。"); return }
         val request = finalRequestPreview(snapshot) ?: run { readingError("请选择有效的阅读模式。"); return }
         val key = selectedApiKey?.takeIf { it.isNotBlank() }
@@ -279,9 +295,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             apiName, snapshot.historyOptions)
         val generation = requestGeneration.next()
         accumulated = StringBuilder()
-        _state.value = snapshot.copy(result = "", status = ReadingStatus.Loading,
-            readingError = null, retryMessage = null, resultActionMessage = null,
-            historySaveMessage = null)
+        cachedHtml = null
+        _state.value = snapshot.withMarkdownGenerationStarted()
         readingJob = viewModelScope.launch {
             var lastUpdate = 0L
             try {
@@ -294,8 +309,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                             accumulated.append(event.value)
                             val now = System.nanoTime()
                             if (now - lastUpdate >= 50_000_000L) {
-                                _state.value = _state.value.copy(result = accumulated.toString(),
-                                    status = ReadingStatus.Streaming, retryMessage = null)
+                                _state.value = _state.value.withGeneratedMarkdown(
+                                    accumulated.toString(), ReadingStatus.Streaming)
                                 lastUpdate = now
                             }
                         }
@@ -309,8 +324,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                             status = ReadingStatus.RetryExhausted, retryMessage = null)
                         ReadingEvent.Finished -> {
                             val finishedReport = accumulated.toString()
-                            _state.value = _state.value.copy(result = finishedReport,
-                                status = ReadingStatus.Completed, retryMessage = null)
+                            _state.value = _state.value.withGeneratedMarkdown(
+                                finishedReport, ReadingStatus.Completed)
                             historyCapture.onEvent(event, finishedReport)?.let { record ->
                                 viewModelScope.launch(Dispatchers.IO) {
                                     try { historyRepository.insertOnce(record) }
@@ -329,8 +344,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 }
             } catch (cancelled: CancellationException) {
                 if (requestGeneration.isCurrent(generation)) {
-                    _state.value = _state.value.copy(result = accumulated.toString(),
-                        status = ReadingStatus.Cancelled, retryMessage = null)
+                    _state.value = _state.value.withGeneratedMarkdown(
+                        accumulated.toString(), ReadingStatus.Cancelled)
                 }
             } catch (error: Exception) {
                 if (requestGeneration.isCurrent(generation)) {
@@ -339,8 +354,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         _state.value.status == ReadingStatus.RetryExhausted -> ReadingStatus.RetryExhausted
                         else -> ReadingStatus.Error
                     }
-                    _state.value = _state.value.copy(result = accumulated.toString(), status = status,
-                        retryMessage = null, readingError = ApiErrorMapper.message(error))
+                    _state.value = _state.value.withGeneratedMarkdown(
+                        accumulated.toString(), status).copy(readingError = ApiErrorMapper.message(error))
                 }
             } finally {
                 if (requestGeneration.isCurrent(generation)) {
@@ -362,8 +377,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         readingJob?.cancel()
         readingCall = null
         readingJob = null
-        _state.value = _state.value.copy(result = accumulated.toString(), status = ReadingStatus.Cancelled,
-            readingError = null, retryMessage = null)
+        _state.value = _state.value.withGeneratedMarkdown(
+            accumulated.toString(), ReadingStatus.Cancelled).copy(readingError = null)
     }
 
     fun clearResult() {
@@ -371,9 +386,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         requestGeneration.invalidate()
         accumulated = StringBuilder()
         cachedHtml = null
-        _state.value = _state.value.copy(result = "", status = ReadingStatus.Idle,
-            readingError = null, retryMessage = null, resultActionMessage = null,
-            historySaveMessage = null)
+        _state.value = _state.value.withClearedMarkdown()
     }
 
     fun prepareMarkdownExport(): Boolean {
@@ -427,7 +440,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     suspend fun htmlForCurrentResult(fontSizePx: Int = _state.value.htmlFontSizePx,
                                      theme: HtmlDocumentTheme = HtmlDocumentTheme.AUTO): String? {
         val snapshot = _state.value
-        if (snapshot.result.isEmpty() || snapshot.status != ReadingStatus.Completed) return null
+        if (!MarkdownWorkspace.canUseHtml(snapshot.result, readingJob?.isActive == true)) return null
         cachedHtml?.takeIf { it.markdown == snapshot.result && it.fontSizePx == fontSizePx &&
             it.theme == theme }?.let { return it.html }
         return withContext(Dispatchers.Default) {
