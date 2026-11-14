@@ -31,7 +31,8 @@ class PromptRepository(
             FIRST_BUILT_IN_ID to "信息点提取V1.md",
             "builtin.keypoints.v2" to "信息点提取V2.md",
             "builtin.full_analysis.v1" to "全文分析总结V1.md",
-            "builtin.full_analysis.v2" to "全文分析总结V2.md"
+            "builtin.full_analysis.v2" to "全文分析总结V2.md",
+            "builtin.info_rescue.v1" to "信息抢救.md"
         )
     }
 

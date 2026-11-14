@@ -179,8 +179,11 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
                     historyId = null
                     apiEditorId = null
                 }, icon = {
-                    if (tab == BottomTab.READING) Icon(painterResource(R.drawable.ic_reading), contentDescription = null)
-                    else Text(tab.icon)
+                    when (tab) {
+                        BottomTab.READING -> Icon(painterResource(R.drawable.ic_reading), contentDescription = null)
+                        BottomTab.HISTORY -> Icon(painterResource(R.drawable.ic_history_nav), contentDescription = null)
+                        else -> Text(tab.icon)
+                    }
                 }, label = { Text(tab.title, maxLines = 1,
                     overflow = TextOverflow.Ellipsis) }, alwaysShowLabel = true)
             }
