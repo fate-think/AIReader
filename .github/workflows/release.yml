@@ -9,14 +9,39 @@ permissions:
 jobs:
   branch-check:
     runs-on: ubuntu-24.04
+    outputs:
+      checked_sha: ${{ steps.check_ref.outputs.checked_sha }}
     steps:
-      - name: Require the main branch
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require main or a trusted version tag
+        id: check_ref
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
-            echo "::error::Signed releases may only run from main."
+          set -euo pipefail
+          checked_sha="$(git rev-parse --verify 'HEAD^{commit}')"
+          trigger_sha="$(git rev-parse --verify "$GITHUB_SHA^{commit}")"
+          if [[ "$checked_sha" != "$trigger_sha" ]]; then
+            echo "::error::Checked-out commit does not match the workflow trigger."
             exit 1
           fi
+          if [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            echo "checked_sha=$checked_sha" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ ! "$GITHUB_REF" =~ ^refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Signed releases require main or a vMAJOR.MINOR.PATCH tag."
+            exit 1
+          fi
+          tag_sha="$(git rev-parse --verify "$GITHUB_REF^{commit}")"
+          main_sha="$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')"
+          if [[ "$checked_sha" != "$tag_sha" ]] || ! git merge-base --is-ancestor "$tag_sha" "$main_sha"; then
+            echo "::error::Version tag must point to a commit in the trusted main history."
+            exit 1
+          fi
+          echo "checked_sha=$checked_sha" >> "$GITHUB_OUTPUT"
 
   release:
     needs: branch-check
@@ -25,6 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
+          ref: ${{ needs['branch-check'].outputs.checked_sha }}
           persist-credentials: false
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
@@ -109,6 +135,10 @@ jobs:
           version="${apk_info[0]}"
           if [[ ! "$version" =~ ^[0-9A-Za-z._-]+$ ]]; then
             echo "::error::Invalid versionName in APK metadata."
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/* && "${GITHUB_REF#refs/tags/v}" != "$version" ]]; then
+            echo "::error::Version tag does not match the built APK versionName."
             exit 1
           fi
           apk="app/build/outputs/apk/release/${apk_info[1]}"

@@ -184,7 +184,7 @@ paraOnce = 3
 
 ## 内部测试 Release 构建
 
-- `.github/workflows/release.yml` 只从 `main` 手动触发；签名 Job 使用 `release` GitHub Environment。Debug 工作流独立且不访问该 Environment。
+- `.github/workflows/release.yml` 仅手动触发，允许 `main` 或指向 `main` 历史提交的正式版本 Tag；签名 Job 使用 `release` GitHub Environment。Debug 工作流仅手动触发且不访问该 Environment。
 - Release 专用 R8 和资源缩减配置位于 `app/build.gradle.kts`；签名配置只从环境变量读取。项目专用 ProGuard 规则位于 `app/proguard-rules.pro`，仅在确认需要时添加有针对性的 keep 规则。
-- `release` Environment 必须由仓库管理员预先创建，限定分支 `main`，并配置 Secrets `RELEASE_KEYSTORE_BASE64`、`RELEASE_STORE_PASSWORD`、`RELEASE_KEY_ALIAS`、`RELEASE_KEY_PASSWORD`，以及 Variable `EXPECTED_RELEASE_CERT_SHA256`。密钥库必须是原有签名身份；不要创建替代密钥，不要在代码、文档或对话中放入真实凭据。
+- `release` Environment 必须由仓库管理员预先创建，仅允许分支 `main` 和 Tag `v*`，并配置 Secrets `RELEASE_KEYSTORE_BASE64`、`RELEASE_STORE_PASSWORD`、`RELEASE_KEY_ALIAS`、`RELEASE_KEY_PASSWORD`，以及 Variable `EXPECTED_RELEASE_CERT_SHA256`。保护 `main`，限制版本 Tag 的创建和修改，并在仓库方案支持时启用 Environment 审批。密钥库必须是原有签名身份；不要创建替代密钥，不要在代码、文档或对话中放入真实凭据。
 - 工作流使用 `apksigner` 验证签名，并与旧版 APK 的预期证书 SHA-256 比较；只有通过后才上传 Release APK。R8 mapping 单独上传并应长期安全留存。两类 Artifact 设置保留 90 天，仍受仓库策略限制。

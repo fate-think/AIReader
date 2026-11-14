@@ -1,8 +1,6 @@
 name: Build Debug APK
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 jobs:
   build:
     runs-on: ubuntu-24.04
