@@ -25,6 +25,23 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+
+    signingConfigs {
+        create("release") {
+            providers.environmentVariable("RELEASE_KEYSTORE_FILE").orNull?.let { storeFile = file(it) }
+            storePassword = providers.environmentVariable("RELEASE_STORE_PASSWORD").orNull
+            keyAlias = providers.environmentVariable("RELEASE_KEY_ALIAS").orNull
+            keyPassword = providers.environmentVariable("RELEASE_KEY_PASSWORD").orNull
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
 }
 
 dependencies {

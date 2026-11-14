@@ -8,6 +8,16 @@ Kotlin、Jetpack Compose、Material 3、MVVM/StateFlow、Room。minSdk 26，comp
 
 本机不安装 Android SDK，也不执行 Android 构建。推送到 `main` 或手动运行 [构建工作流](.github/workflows/build-apk.yml)，由 GitHub 托管 Runner 执行 `testDebugUnitTest` 与 `assembleDebug`，并上传 Debug APK。
 
+## 内部测试 Release APK
+
+[独立 Release 工作流](.github/workflows/release.yml) 仅允许在 `main` 手动运行；它使用 JDK 17、项目 Gradle Wrapper，先运行 JVM 单元测试，再执行 `assembleRelease`。R8 代码压缩和资源缩减仅对 Release 开启，Debug 工作流及其签名方式不变。工作流不会创建 GitHub Release 或响应 Tag 推送。
+
+首次运行前，须在 GitHub 仓库 Settings → Environments 手动创建名为 `release` 的 Environment，并将允许部署的分支限定为 `main`。在该 Environment 中配置四个 **Secrets**：`RELEASE_KEYSTORE_BASE64`（原有签名密钥库文件的 Base64）、`RELEASE_STORE_PASSWORD`、`RELEASE_KEY_ALIAS`、`RELEASE_KEY_PASSWORD`；再配置一个 **Variable**：`EXPECTED_RELEASE_CERT_SHA256`。不要将这些凭据复制到普通 Repository Secrets，也不要在对话中发送密钥或密码。如果仓库方案支持 Required reviewers，可为该 Environment 开启人工审批；同时应保护 `main` 的写入权限。Environment Secrets 和分支保护的可用性取决于 GitHub 仓库方案与可见性。[GitHub Environment 文档](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)说明了这些限制。
+
+`EXPECTED_RELEASE_CERT_SHA256` 应填旧版已安装 APK 的**签名证书** SHA-256（可从旧 APK 执行 `apksigner verify --print-certs 旧版.apk` 核对），不是 APK 文件的 SHA-256。工作流缺少任一配置、签名无效、证书指纹不符或 mapping 缺失时都会失败，不会上传正式 APK。密钥库仅在签名构建步骤解码到 Runner 临时目录，构建结束即清理；密码仅经环境变量传给 Gradle。下载后还可用附带的 `.sha256` 文件核对 APK 完整性。覆盖安装还要求手机已安装版本的 `versionCode` 不高于项目当前值（目前为 25）；发布前请核对实际安装版本。
+
+在 Actions 页面选择 **Build signed Release APK → Run workflow → main**。成功后从该次运行的 Artifacts 下载 `AIReader-v<版本>-release-<运行编号>`，其中包含已验证签名的 APK 和 SHA-256 文件；另一个 `AIReader-v<版本>-mapping-<运行编号>` 单独保存 R8 `mapping.txt`。两个 Artifact 设置保留 90 天，可能受仓库或组织更短上限约束；每次发布后应把对应 mapping 下载到受限的长期存储，供将来还原混淆后的崩溃堆栈。
+
 ## 数据
 
 四份内置提示词位于 `app/src/main/assets/prompts/`。内置模式有稳定 ID，可编辑，并可在确认后从 assets 恢复默认；不能删除。提示词管理页的“我的自定义提示词”区域可持续新增、编辑、重命名和删除任意多套模式。删除前会确认；删除当前模式后自动选中第一套内置模式。编辑未保存内容时返回会提醒。
