@@ -163,6 +163,17 @@ class ReadingHistoryViewModel(application: Application) : AndroidViewModel(appli
         false
     }
 
+    suspend fun browserHtmlUri(markdown: String, fontSizePx: Int): Uri? = try {
+        val html = withContext(Dispatchers.Default) {
+            MarkdownHtmlConverter().convert(markdown, fontSizePx, HtmlDocumentTheme.AUTO)
+        }
+        withContext(Dispatchers.IO) { HtmlBrowser.uri(getApplication<Application>(), html) }
+    } catch (cancelled: CancellationException) { throw cancelled }
+    catch (_: Exception) {
+        _state.value = _state.value.copy(message = "无法准备浏览器文件，请使用 HTML 预览或保存 HTML。")
+        null
+    }
+
     fun completeHtmlExport(uri: Uri?) {
         val html = pendingHtml
         pendingHtml = null

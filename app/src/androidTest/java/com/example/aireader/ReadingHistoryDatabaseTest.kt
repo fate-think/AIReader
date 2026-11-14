@@ -37,7 +37,7 @@ class ReadingHistoryDatabaseTest {
 
     private fun record(id: String, title: String, time: Long, mode: String = "旧模式", report: String = "# 报告") =
         ReadingHistoryEntity(id, title, "原始文章。", report, "removed-mode", mode,
-            "old-model", "renamed-api", time, time)
+            "old-model", "renamed-api", time, time, null)
 
     @Test fun successfulStreamingAndNonStreamingCompletionsInsertOnce() = runBlocking {
         val stream = record("stream-request", "流式报告", 10)
@@ -47,6 +47,44 @@ class ReadingHistoryDatabaseTest {
         assertTrue(repository.insertOnce(nonStream))
         assertFalse(repository.insertOnce(nonStream))
         assertEquals(2, repository.summaries("").first().size)
+    }
+
+    @Test fun finalMessageIsLoadedOnlyWithDetail() = runBlocking {
+        val message = "完整提示词\n{段落1} 原文。"
+        repository.insertOnce(record("snapshot", "快照", 30).copy(finalUserMessage = message))
+        assertEquals(message, repository.find("snapshot")?.finalUserMessage)
+        assertEquals(listOf("snapshot"), repository.summaries("").first().map { it.id })
+    }
+
+    @Test fun migrationFromVersionOnePreservesExistingRecord() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val name = "history-migration-${UUID.randomUUID()}.db"
+        context.openOrCreateDatabase(name, android.content.Context.MODE_PRIVATE, null).use { old ->
+            old.execSQL("""CREATE TABLE IF NOT EXISTS reading_history (
+                id TEXT NOT NULL PRIMARY KEY, title TEXT NOT NULL, originalArticle TEXT,
+                markdownResult TEXT NOT NULL, readingModeId TEXT NOT NULL,
+                readingModeName TEXT NOT NULL, modelId TEXT NOT NULL,
+                apiConfigName TEXT NOT NULL, createdAt INTEGER NOT NULL,
+                updatedAt INTEGER NOT NULL)""")
+            old.execSQL("CREATE INDEX IF NOT EXISTS index_reading_history_createdAt ON reading_history (createdAt)")
+            old.execSQL("""INSERT INTO reading_history VALUES
+                ('old-id', '旧标题', '旧原文', '# 旧报告', 'old-mode', '旧模式',
+                'old-model', '旧 API', 100, 100)""")
+            old.version = 1
+        }
+        val migrated = Room.databaseBuilder(context, ReadingHistoryDatabase::class.java, name)
+            .addMigrations(ReadingHistoryDatabase.MIGRATION_1_2).build()
+        try {
+            val old = migrated.historyDao().find("old-id")!!
+            assertEquals("旧标题", old.title)
+            assertEquals("旧原文", old.originalArticle)
+            assertEquals("# 旧报告", old.markdownResult)
+            assertNull(old.finalUserMessage)
+            assertEquals(1, migrated.historyDao().summaries("").first().size)
+        } finally {
+            migrated.close()
+            context.deleteDatabase(name)
+        }
     }
 
     @Test fun summaryOrderingSearchAndFullDetailRemainIndependent() = runBlocking {

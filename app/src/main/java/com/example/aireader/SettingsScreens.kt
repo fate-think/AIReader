@@ -62,7 +62,7 @@ fun ApiSettingsList(state: ReaderState, model: ReaderViewModel,
                         style = MaterialTheme.typography.bodySmall)
                     Row(modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        TextButton(onClick = { model.selectApiProfile(profile.id) },
+                        TextButton(onClick = { model.selectApiProfile(profile.id, notifySuccess = true) },
                             enabled = profile.id != state.selectedApiProfileId,
                             modifier = Modifier.weight(1f)) { Text("使用") }
                         TextButton(onClick = {

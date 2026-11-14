@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -27,6 +28,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -35,6 +37,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
@@ -61,6 +65,19 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(model) {
+        model.apiNotices.collect { message ->
+            coroutineScope {
+                val notice = launch {
+                    snackbarHostState.showSnackbar(message, duration = SnackbarDuration.Indefinite)
+                }
+                delay(2500)
+                snackbarHostState.currentSnackbarData?.dismiss()
+                notice.join()
+            }
+        }
+    }
     val historyModel: ReadingHistoryViewModel = viewModel()
     val historyState by historyModel.state.collectAsStateWithLifecycle()
     var page by rememberSaveable { mutableStateOf(BottomTab.READING.index) }
@@ -138,6 +155,7 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
     }
     Scaffold(
         modifier = Modifier.imePadding(),
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = { Surface(
             modifier = Modifier.fillMaxWidth(),
             color = MaterialTheme.colorScheme.surface,
@@ -375,13 +393,20 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
         if (active) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         state.readingError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         state.historySaveMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = state.markdownViewMode == MarkdownViewMode.EDIT,
                 onClick = { model.setMarkdownViewMode(MarkdownViewMode.EDIT) },
-                enabled = !active, label = { Text("编辑 Markdown") })
+                enabled = !active, shape = RoundedCornerShape(24.dp),
+                modifier = Modifier.weight(1f).heightIn(min = 56.dp).fillMaxHeight(),
+                label = { Text("编辑 Markdown", textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()) })
             FilterChip(selected = state.markdownViewMode == MarkdownViewMode.PREVIEW,
                 onClick = { model.setMarkdownViewMode(MarkdownViewMode.PREVIEW) },
-                enabled = !active, label = { Text("预览 Markdown") })
+                enabled = !active, shape = RoundedCornerShape(24.dp),
+                modifier = Modifier.weight(1f).heightIn(min = 56.dp).fillMaxHeight(),
+                label = { Text("预览 Markdown", textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()) })
         }
         if (!active && state.markdownViewMode == MarkdownViewMode.EDIT) {
             OutlinedTextField(value = state.result, onValueChange = model::setMarkdown,
@@ -401,12 +426,17 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
                 MarkdownResult(state.result, resultScroll, streaming = active)
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { clipboard.setText(AnnotatedString(state.result)) },
-                enabled = state.result.isNotEmpty(), modifier = Modifier.weight(1f)) { Text("复制 Markdown") }
-            Box(Modifier.weight(1f)) {
-                OutlinedButton(onClick = { moreActions = true }, modifier = Modifier.fillMaxWidth()) {
-                    Text("更多操作")
+                enabled = state.result.isNotEmpty(), shape = RoundedCornerShape(24.dp),
+                modifier = Modifier.weight(1f).heightIn(min = 56.dp).fillMaxHeight()) {
+                Text("复制 Markdown", textAlign = TextAlign.Center)
+            }
+            Box(Modifier.weight(1f).heightIn(min = 56.dp).fillMaxHeight()) {
+                OutlinedButton(onClick = { moreActions = true }, shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier.fillMaxSize()) {
+                    Text("更多操作", textAlign = TextAlign.Center)
                 }
                 DropdownMenu(expanded = moreActions, onDismissRequest = { moreActions = false }) {
                     DropdownMenuItem(text = { Text("HTML 预览") }, enabled = htmlReady && !htmlBusy,
@@ -424,11 +454,7 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
                             scope.launch {
                                 try {
                                     model.browserHtmlUri()?.let { uri ->
-                                        val intent = Intent(Intent.ACTION_VIEW).apply {
-                                            setDataAndType(uri, "text/html")
-                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                        }
-                                        try { context.startActivity(intent) }
+                                        try { HtmlBrowser.open(context, uri) }
                                         catch (_: Exception) {
                                             model.reportHtmlFailure("浏览器可能不支持直接打开此文件。可使用 HTML 预览，或保存 HTML 后用支持本地文件的浏览器打开。")
                                         }

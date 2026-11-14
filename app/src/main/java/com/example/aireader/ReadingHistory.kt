@@ -11,6 +11,8 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "reading_history", indices = [Index("createdAt")])
@@ -24,7 +26,8 @@ data class ReadingHistoryEntity(
     val modelId: String,
     val apiConfigName: String,
     val createdAt: Long,
-    val updatedAt: Long
+    val updatedAt: Long,
+    val finalUserMessage: String?
 )
 
 /** List queries deliberately exclude the original article and full report. */
@@ -68,17 +71,22 @@ interface ReadingHistoryDao {
     suspend fun clearAll(): Int
 }
 
-@Database(entities = [ReadingHistoryEntity::class], version = 1, exportSchema = true)
+@Database(entities = [ReadingHistoryEntity::class], version = 2, exportSchema = true)
 abstract class ReadingHistoryDatabase : RoomDatabase() {
     abstract fun historyDao(): ReadingHistoryDao
 
     companion object {
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE reading_history ADD COLUMN finalUserMessage TEXT")
+            }
+        }
         @Volatile private var instance: ReadingHistoryDatabase? = null
 
         fun get(context: Context): ReadingHistoryDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext,
                 ReadingHistoryDatabase::class.java, "reading_history.db")
-                // Future versions must register explicit migrations here; never destroy user history.
+                .addMigrations(MIGRATION_1_2)
                 .build().also { instance = it }
         }
     }

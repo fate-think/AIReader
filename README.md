@@ -8,6 +8,16 @@ Kotlin、Jetpack Compose、Material 3、MVVM/StateFlow、Room。minSdk 26，comp
 
 本机不安装 Android SDK，也不执行 Android 构建。推送到 `main` 或手动运行 [构建工作流](.github/workflows/build-apk.yml)，由 GitHub 托管 Runner 执行 `testDebugUnitTest` 与 `assembleDebug`，并上传 Debug APK。
 
+## 内部测试 Release APK
+
+[独立 Release 工作流](.github/workflows/release.yml) 仅允许在 `main` 手动运行；它使用 JDK 17、项目 Gradle Wrapper，先运行 JVM 单元测试，再执行 `assembleRelease`。R8 代码压缩和资源缩减仅对 Release 开启，Debug 工作流及其签名方式不变。工作流不会创建 GitHub Release 或响应 Tag 推送。
+
+首次运行前，须在 GitHub 仓库 Settings → Environments 手动创建名为 `release` 的 Environment，并将允许部署的分支限定为 `main`。在该 Environment 中配置四个 **Secrets**：`RELEASE_KEYSTORE_BASE64`（原有签名密钥库文件的 Base64）、`RELEASE_STORE_PASSWORD`、`RELEASE_KEY_ALIAS`、`RELEASE_KEY_PASSWORD`；再配置一个 **Variable**：`EXPECTED_RELEASE_CERT_SHA256`。不要将这些凭据复制到普通 Repository Secrets，也不要在对话中发送密钥或密码。如果仓库方案支持 Required reviewers，可为该 Environment 开启人工审批；同时应保护 `main` 的写入权限。Environment Secrets 和分支保护的可用性取决于 GitHub 仓库方案与可见性。[GitHub Environment 文档](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)说明了这些限制。
+
+`EXPECTED_RELEASE_CERT_SHA256` 应填旧版已安装 APK 的**签名证书** SHA-256（可从旧 APK 执行 `apksigner verify --print-certs 旧版.apk` 核对），不是 APK 文件的 SHA-256。工作流缺少任一配置、签名无效、证书指纹不符或 mapping 缺失时都会失败，不会上传正式 APK。密钥库仅在签名构建步骤解码到 Runner 临时目录，构建结束即清理；密码仅经环境变量传给 Gradle。下载后还可用附带的 `.sha256` 文件核对 APK 完整性。覆盖安装还要求手机已安装版本的 `versionCode` 不高于项目当前值（目前为 25）；发布前请核对实际安装版本。
+
+在 Actions 页面选择 **Build signed Release APK → Run workflow → main**。成功后从该次运行的 Artifacts 下载 `AIReader-v<版本>-release-<运行编号>`，其中包含已验证签名的 APK 和 SHA-256 文件；另一个 `AIReader-v<版本>-mapping-<运行编号>` 单独保存 R8 `mapping.txt`。两个 Artifact 设置保留 90 天，可能受仓库或组织更短上限约束；每次发布后应把对应 mapping 下载到受限的长期存储，供将来还原混淆后的崩溃堆栈。
+
 ## 数据
 
 四份内置提示词位于 `app/src/main/assets/prompts/`。内置模式有稳定 ID，可编辑，并可在确认后从 assets 恢复默认；不能删除。提示词管理页的“我的自定义提示词”区域可持续新增、编辑、重命名和删除任意多套模式。删除前会确认；删除当前模式后自动选中第一套内置模式。编辑未保存内容时返回会提醒。
@@ -26,11 +36,15 @@ Kotlin、Jetpack Compose、Material 3、MVVM/StateFlow、Room。minSdk 26，comp
 
 复制、分享、保存 Markdown，以及 HTML 预览、浏览器打开和保存 HTML，都使用工作区中的当前 Markdown。编辑后 HTML 会根据最新内容重新生成；空内容不能执行这些操作。已有手动内容或手动修改过的 AI 报告在新请求覆盖前会要求确认。手动输入、切换模式、预览和导出不会调用 API，也不会自动写入阅读历史；历史仍仅自动保存成功完成的 AI 报告。“清空 Markdown”经确认只清空工作区，并返回空白编辑模式。
 
+“编辑 Markdown”“预览 Markdown”“复制 Markdown”“更多操作”保持两行两列，各按钮使用相同的 24dp 圆角与自适应最小高度，系统大字体下文字可换行。
+
 ## API 使用
 
 在“设置 → 大模型 API 配置 → 编辑”填写 Base URL、API Key 和 Model ID；可调整 Temperature、最大输出 token、是否发送 Temperature、`max_tokens` 或 `max_completion_tokens`、流式输出。Base URL 默认只接受 HTTPS；如需 HTTP，明确开启“允许 HTTP Base URL”并保存。HTTP 会以明文传输 API Key 和文章内容。粘贴 API Key 时会自动去除首尾空白和换行；密钥中间若含换行则提示重新粘贴。留空新密钥并保存会保留已有密钥；删除密钥需要明确点击删除并保存。密钥丢失或设备迁移后无法解密时需重新输入。文章将发送至用户配置的第三方 API 服务。“测试连接”发送独立的“请只回复 OK。”短请求，并使用设置页当前的流式输出、最大输出 token 和 Temperature 参数设置；可能产生调用费用。若参考 curl 排查连接问题，请确保这些参数也一致。
 
 “设置 → 大模型 API 配置”可新增任意多套配置，点“使用”切换当前配置，点“编辑”进入对应配置的参数页；可复制参数为新配置，复制时不会复制 API Key。删除配置需要确认，至少保留一套；删除正在使用的配置后自动选择剩余列表中的第一套。阅读页也有配置下拉菜单，显示配置名称和模型，下一次请求使用新选择的配置；正在生成的请求继续使用启动时固定的地址、参数及密钥。旧版单套 API 设置在首次启动时自动迁移为“默认 API 配置”，旧密文直接保留，旧字段暂不删除。若 Keystore 密钥失效，界面提示重新输入该配置的 API Key。
+
+API 配置新增、切换、复制、删除及成功保存使用约 2.5 秒后自动消失的 Snackbar 提示；进入页面或返回列表不会回放旧的成功提示。
 
 “思考深度”区域提供独立的“发送思考深度参数”开关和 Max、XHigh、High、Medium、Low、Minimal、None 七档。默认关闭发送、默认选择 Max。开启后，Chat Completions 请求 JSON 顶层添加所选的 `reasoning_effort` 原始值；关闭后完全省略该字段，但保留上次选中的档位。每套 API 配置独立保存开关和档位。测试连接使用当前编辑配置的参数与密钥，可能产生少量费用；服务端是否支持所选档位以实际响应为准。
 
@@ -50,6 +64,8 @@ Kotlin、Jetpack Compose、Material 3、MVVM/StateFlow、Room。minSdk 26，comp
 
 成功生成且内容非空的报告默认自动保存到本机 Room 数据库。每次请求使用固定 UUID 作为主键，重复完成通知不会生成重复历史；失败、停止生成和未完成的流不会保存。保存时记录当时的模式名称、模型与 API 配置名称快照，不依赖后续配置是否仍存在。标题取原始文章第一行非空文本的前 50 字；用户可在详情中重命名。
 
+新历史在“保存文章原文”开启时还保存该次请求实际发送的完整 User Message；关闭时不保存此快照。历史详情可只读查看并复制快照；旧历史或未保存快照的记录显示“该历史记录未保存最终发送内容。”，不会按当前提示词重新构造。历史详情也可将对应报告转换为 HTML 并尝试通过系统浏览器打开。
+
 “设置 → 阅读历史与数据管理”提供“自动保存阅读历史”和“保存文章原文”两个开关，默认开启，使用 DataStore 持久化。关闭自动保存不删除旧记录；关闭保存原文后，新记录仍保留完整 Markdown 报告，但不保存文章。两个选项在请求开始时固定。保存失败会提示用户，当前生成结果继续留在阅读页。
 
 通过底栏“历史”可直接进入原有历史列表，也可从“设置 → 阅读历史与数据管理 → 查看阅读历史”进入同一列表。列表可按标题或阅读模式名称搜索、查看按创建时间倒序的摘要、打开完整报告、多选删除或确认后清空全部。列表通过 Room Flow 仅查询标题、时间、模式、模型及前 160 字预览；完整文章与 Markdown 只在打开详情时按 ID 读取。详情复用当前 Markdown 展示、HTML 转换与预览、Markdown/HTML 导出，也支持复制、分享、重命名和确认删除。历史页面不发起 AI 请求，不改动当前文章草稿或报告。
@@ -58,13 +74,13 @@ Kotlin、Jetpack Compose、Material 3、MVVM/StateFlow、Room。minSdk 26，comp
 
 底部导航依次为“阅读 / 提示词 / 历史 / 设置”。“历史”直接打开原有历史列表，详情返回该列表；“设置”打开菜单首页，仍显示“大模型 API 配置”“夜间模式”“阅读历史与数据管理”“关于”四项。设置内的“阅读历史与数据管理”继续负责历史保存与数据清理，也可进入同一历史列表。API 配置列表可进入单套配置编辑页；网络稳定性参数继续归属该套配置。离开有未保存改动的 API 编辑页前会提示确认。设置内的历史详情依次返回历史列表和数据管理页；设置二级页面的系统返回键回到上一级。“关于”从应用包信息读取实际版本号，并说明本机历史、API Key 保存及用户主动导出与分享。
 
-历史可能包含敏感文章和报告，只保存在应用私有数据库，不保存 API Key，也不上传服务器。应用已禁用 Android 自动备份；卸载应用通常会删除本机历史，不保证卸载后恢复。Room 数据库从 schema version 1 开始，后续升级须提供明确的 Migration，不启用破坏性迁移。
+历史可能包含敏感文章、报告和最终发送内容快照，只保存在应用私有数据库，不保存 API Key，也不上传服务器。应用已禁用 Android 自动备份；卸载应用通常会删除本机历史，不保证卸载后恢复。Room 数据库当前为 schema version 2，通过显式 `MIGRATION_1_2` 为旧历史添加默认 null 的 `finalUserMessage` 列；后续升级须提供明确的 Migration，不启用破坏性迁移。
 
 ## 测试
 
 GitHub Actions 运行 `testDebugUnitTest`。提示词管理、预处理与设置测试继续保留；MockWebServer 测试覆盖 URL、单条 user 消息、参数、流式与普通响应、错误处理、取消及重定向。多配置测试覆盖旧设置与密文迁移、重复迁移、配置及密钥隔离、选择持久化、复制与删除、并发新增、测试连接和请求快照。主题测试覆盖模式选择、持久化、旧配置、未知值与 HTML 配色；思考深度、网络重试和 HTML 导出测试继续保留。界面切换、系统栏、SSE 期间切换主题、WebView、浏览器兼容性、系统分享与文件选择器需要通过 GitHub Actions 构建 APK 后在真机验证。
 
-阅读历史新增 JVM 单元测试覆盖请求快照、标题和保存设置；`ReadingHistoryDatabaseTest` 是 Android 设备测试，覆盖 Room 的幂等插入、排序、摘要、长报告、搜索、详情、重命名及删除。当前 Actions 只执行 `testDebugUnitTest`，不会执行 `connectedDebugAndroidTest`；Room 设备测试及界面操作仍需在 Android 设备上验证。首次 Actions 构建会生成 Room schema JSON，应提交生成的 version 1 schema 供后续迁移测试使用。
+阅读历史 JVM 单元测试覆盖请求快照、标题和保存设置；`ReadingHistoryDatabaseTest` 是 Android 设备测试，覆盖 Room 的幂等插入、排序、摘要、长报告、搜索、详情、重命名、删除及版本 1 到 2 的迁移。当前 Actions 只执行 `testDebugUnitTest`，不会执行 `connectedDebugAndroidTest`；Room 设备测试及界面操作仍需在 Android 设备上验证。Actions 构建生成的 Room schema JSON 应补交到仓库，供后续迁移测试使用。
 
 设置导航新增 JVM 测试覆盖四菜单顺序和各二级页面返回路径；实际 Compose 点击、未保存确认、较大字体与系统返回键仍需 APK 在真机上验证。
 

@@ -2,7 +2,7 @@
 
 ## 开发环境
 
-- Ubuntu 22.04 x86_64
+- Ubuntu 26.04.1 LTS x86_64
 - 云服务器：2 vCPU、约 2 GB RAM
 - Codex CLI 已安装并登录
 - 使用 GitHub Actions 编译 APK
@@ -138,8 +138,9 @@ paraOnce = 3
 
 - 成功完成的报告使用 Room 本地保存；`requestId` 是历史主键，重复完成事件只能插入一次。失败、取消和未完成流不得保存。
 - 自动保存和保存原文开关位于现有 DataStore，默认均开启；请求开始时固定设置、原文、阅读模式名称、模型和 API 配置名称快照。
-- 历史列表只查询摘要，详情按 ID 读取完整内容；历史记录不保存 API Key、提示词正文或完整请求。
+- 历史列表只查询摘要，详情按 ID 读取完整内容；新历史仅在“保存文章原文”开启时保存实际发送的完整 User Message 快照，关闭时存为 null。旧历史没有此快照，不得用当前设置重新构造。历史记录不保存 API Key 或认证信息。
 - 数据库升级必须添加显式 Migration，不使用无条件 destructive migration。现有全局 `allowBackup=false` 保持不变。
+- 当前 Room 版本 2，`MIGRATION_1_2` 为历史表添加可空的 `finalUserMessage` 列，旧记录保持 null。
 - 历史删除只操作 Room，不影响提示词、API 配置或 DataStore。Android 设备测试放在 `androidTest`，本地云服务器不运行 Android 构建。
 
 ## 设置导航（第九阶段）
@@ -180,3 +181,10 @@ paraOnce = 3
 - 不使用 self-hosted Runner。
 - 没有实际构建成功时不得声称编译通过。
 - 优先保证功能稳定，不要过度设计。
+
+## 内部测试 Release 构建
+
+- `.github/workflows/release.yml` 只从 `main` 手动触发；签名 Job 使用 `release` GitHub Environment。Debug 工作流独立且不访问该 Environment。
+- Release 专用 R8 和资源缩减配置位于 `app/build.gradle.kts`；签名配置只从环境变量读取。项目专用 ProGuard 规则位于 `app/proguard-rules.pro`，仅在确认需要时添加有针对性的 keep 规则。
+- `release` Environment 必须由仓库管理员预先创建，限定分支 `main`，并配置 Secrets `RELEASE_KEYSTORE_BASE64`、`RELEASE_STORE_PASSWORD`、`RELEASE_KEY_ALIAS`、`RELEASE_KEY_PASSWORD`，以及 Variable `EXPECTED_RELEASE_CERT_SHA256`。密钥库必须是原有签名身份；不要创建替代密钥，不要在代码、文档或对话中放入真实凭据。
+- 工作流使用 `apksigner` 验证签名，并与旧版 APK 的预期证书 SHA-256 比较；只有通过后才上传 Release APK。R8 mapping 单独上传并应长期安全留存。两类 Artifact 设置保留 90 天，仍受仓库策略限制。

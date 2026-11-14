@@ -3,15 +3,16 @@ package com.example.aireader
 import android.app.Application
 import android.content.Context
 import android.net.Uri
-import androidx.core.content.FileProvider
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
@@ -104,6 +105,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val client = OpenAiCompatibleClient()
     private val _state = MutableStateFlow(ReaderState())
     val state: StateFlow<ReaderState> = _state
+    private val apiNoticeChannel = Channel<String>(Channel.BUFFERED)
+    val apiNotices = apiNoticeChannel.receiveAsFlow()
     private var selectedApiKey: String? = null
     private var readingJob: Job? = null
     @Volatile private var readingCall: Call? = null
@@ -292,7 +295,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val mode = snapshot.modes.first { it.id == snapshot.selectedModeId }
         val apiName = snapshot.apiProfiles.firstOrNull { it.id == snapshot.selectedApiProfileId }?.name.orEmpty()
         val historyCapture = HistoryCapture.start(snapshot.article, mode, config.modelId,
-            apiName, snapshot.historyOptions)
+            apiName, snapshot.historyOptions, request.userMessage)
         val generation = requestGeneration.next()
         accumulated = StringBuilder()
         cachedHtml = null
@@ -464,12 +467,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     suspend fun browserHtmlUri(): Uri? {
         return try {
             val html = htmlForCurrentResult() ?: return null
-            withContext(Dispatchers.IO) {
-                val dir = java.io.File(context.cacheDir, "html_reports").apply { mkdirs() }
-                val file = java.io.File(dir, "AIReader-${java.util.UUID.randomUUID()}.html")
-                file.outputStream().use { HtmlExport.write(it, html) }
-                FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-            }
+            withContext(Dispatchers.IO) { HtmlBrowser.uri(context, html) }
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) {
             _state.value = _state.value.copy(resultActionMessage = "无法准备浏览器文件，请使用 HTML 预览或保存 HTML。")
@@ -509,7 +507,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 val config = configFrom(settings)
                 apiProfilesRepository.save(profileId, name, config, newKey, deleteKey)
-                _state.value = _state.value.copy(settingsMessage = "API 配置已保存。")
+                _state.value = _state.value.copy(settingsMessage = null)
+                apiNoticeChannel.send("API 配置已保存")
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 _state.value = _state.value.copy(settingsMessage = ApiErrorMapper.message(error))
@@ -545,14 +544,22 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun selectApiProfile(id: String) = viewModelScope.launch {
-        try { apiProfilesRepository.select(id) }
+    fun selectApiProfile(id: String, notifySuccess: Boolean = false) = viewModelScope.launch {
+        try {
+            apiProfilesRepository.select(id)
+            _state.value = _state.value.copy(settingsMessage = null)
+            if (notifySuccess) apiNoticeChannel.send("已切换 API 配置")
+        }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { _state.value = _state.value.copy(settingsMessage = "无法切换 API 配置。") }
     }
 
     fun addApiProfile() = viewModelScope.launch {
-        try { apiProfilesRepository.add("新 API 配置") }
+        try {
+            apiProfilesRepository.add("新 API 配置")
+            _state.value = _state.value.copy(settingsMessage = null)
+            apiNoticeChannel.send("API 配置已添加")
+        }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { _state.value = _state.value.copy(settingsMessage = "无法新增 API 配置。") }
     }
@@ -560,13 +567,18 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun copyApiProfile(id: String, name: String) = viewModelScope.launch {
         try {
             apiProfilesRepository.copy(id, "$name 副本")
-            _state.value = _state.value.copy(settingsMessage = "已复制配置参数；API Key 未复制。")
+            _state.value = _state.value.copy(settingsMessage = null)
+            apiNoticeChannel.send("API 配置已复制")
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { _state.value = _state.value.copy(settingsMessage = "无法复制 API 配置。") }
     }
 
     fun deleteApiProfile(id: String) = viewModelScope.launch {
-        try { apiProfilesRepository.delete(id) }
+        try {
+            apiProfilesRepository.delete(id)
+            _state.value = _state.value.copy(settingsMessage = null)
+            apiNoticeChannel.send("API 配置已删除")
+        }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { _state.value = _state.value.copy(settingsMessage = "无法删除 API 配置。") }
     }

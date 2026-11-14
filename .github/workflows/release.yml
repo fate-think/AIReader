@@ -1,0 +1,180 @@
+name: Build signed Release APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  branch-check:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require the main branch
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::Signed releases may only run from main."
+            exit 1
+          fi
+
+  release:
+    needs: branch-check
+    runs-on: ubuntu-24.04
+    environment: release
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platform-tools'
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --no-daemon
+      - name: Build signed Release APK
+        shell: bash
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          EXPECTED_RELEASE_CERT_SHA256: ${{ vars.EXPECTED_RELEASE_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          for name in RELEASE_KEYSTORE_BASE64 RELEASE_STORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD EXPECTED_RELEASE_CERT_SHA256; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required in the release Environment."
+              exit 1
+            fi
+          done
+          expected="$(printf '%s' "$EXPECTED_RELEASE_CERT_SHA256" | tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')"
+          if [[ ! "$expected" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::EXPECTED_RELEASE_CERT_SHA256 must be a 64-digit SHA-256 fingerprint."
+            exit 1
+          fi
+          keystore="$RUNNER_TEMP/aireader-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.keystore"
+          trap 'rm -f -- "$keystore"' EXIT
+          umask 077
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          unset RELEASE_KEYSTORE_BASE64
+          chmod 600 "$keystore"
+          if [[ ! -s "$keystore" ]]; then
+            echo "::error::Decoded release keystore is empty."
+            exit 1
+          fi
+          export RELEASE_KEYSTORE_FILE="$keystore"
+          ./gradlew assembleRelease --no-daemon
+      - name: Verify signature and prepare artifacts
+        id: verify
+        shell: bash
+        env:
+          EXPECTED_RELEASE_CERT_SHA256: ${{ vars.EXPECTED_RELEASE_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          metadata="app/build/outputs/apk/release/output-metadata.json"
+          mapping="app/build/outputs/mapping/release/mapping.txt"
+          if [[ ! -s "$metadata" || ! -s "$mapping" ]]; then
+            echo "::error::Release APK metadata or R8 mapping.txt is missing."
+            exit 1
+          fi
+          mapfile -t apk_info < <(python3 - "$metadata" <<'PY'
+          import json
+          import os
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              data = json.load(stream)
+          assert data["applicationId"] == "com.example.aireader"
+          assert data["variantName"] == "release"
+          assert len(data["elements"]) == 1
+          item = data["elements"][0]
+          name = item["outputFile"]
+          assert name == os.path.basename(name) and name.endswith(".apk")
+          print(item["versionName"])
+          print(name)
+          print(item["versionCode"])
+          PY
+          )
+          if [[ "${#apk_info[@]}" -ne 3 ]]; then
+            echo "::error::Could not read the single Release APK from build metadata."
+            exit 1
+          fi
+          version="${apk_info[0]}"
+          if [[ ! "$version" =~ ^[0-9A-Za-z._-]+$ ]]; then
+            echo "::error::Invalid versionName in APK metadata."
+            exit 1
+          fi
+          apk="app/build/outputs/apk/release/${apk_info[1]}"
+          if [[ ! -s "$apk" ]]; then
+            echo "::error::Release APK is missing or empty."
+            exit 1
+          fi
+          apksigner="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          if [[ ! -x "$apksigner" ]]; then
+            echo "::error::apksigner is unavailable."
+            exit 1
+          fi
+          cert_output="$("$apksigner" verify --verbose --print-certs "$apk")"
+          scheme_status() {
+            printf '%s\n' "$cert_output" | sed -nE "s/^Verified using $1 scheme[^:]*: (true|false)$/\1/p"
+          }
+          for entry in v1:false v2:true v3:true; do
+            scheme="${entry%%:*}"
+            expected_status="${entry#*:}"
+            if [[ "$(scheme_status "$scheme")" != "$expected_status" ]]; then
+              echo "::error::Release APK $scheme signature must be $expected_status."
+              exit 1
+            fi
+          done
+          if printf '%s\n' "$cert_output" | grep -Eq '^Verified using v4 scheme' && [[ "$(scheme_status v4)" != false ]]; then
+            echo "::error::Release APK v4 signature must be false when reported."
+            exit 1
+          fi
+          mapfile -t signer_fingerprints < <(printf '%s\n' "$cert_output" | sed -nE 's/^Signer #[0-9]+ certificate SHA-256 digest: ([0-9A-Fa-f:]+)$/\1/p')
+          if [[ "${#signer_fingerprints[@]}" -ne 1 ]]; then
+            echo "::error::Expected exactly one APK signing certificate."
+            exit 1
+          fi
+          actual="$(printf '%s' "${signer_fingerprints[0]}" | tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')"
+          expected="$(printf '%s' "$EXPECTED_RELEASE_CERT_SHA256" | tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')"
+          if [[ ! "$expected" =~ ^[0-9a-f]{64}$ || "$actual" != "$expected" ]]; then
+            echo "::error::APK signing certificate does not match the expected old-install certificate."
+            exit 1
+          fi
+          stage="$RUNNER_TEMP/aireader-release-artifacts"
+          mkdir -p "$stage"
+          apk_name="AIReader-v${version}-release.apk"
+          mapping_name="AIReader-v${version}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-mapping.txt"
+          cp -- "$apk" "$stage/$apk_name"
+          cp -- "$mapping" "$stage/$mapping_name"
+          (cd "$stage" && sha256sum "$apk_name" > "$apk_name.sha256")
+          echo "Verified Release version $version (versionCode ${apk_info[2]})."
+          echo "Signing certificate SHA-256: $actual"
+          sha256sum "$stage/$apk_name"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "apk_path=$stage/$apk_name" >> "$GITHUB_OUTPUT"
+          echo "checksum_path=$stage/$apk_name.sha256" >> "$GITHUB_OUTPUT"
+          echo "mapping_path=$stage/$mapping_name" >> "$GITHUB_OUTPUT"
+      - name: Upload signed Release APK and checksum
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: AIReader-v${{ steps.verify.outputs.version }}-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.verify.outputs.apk_path }}
+            ${{ steps.verify.outputs.checksum_path }}
+          if-no-files-found: error
+          retention-days: 90
+      - name: Upload R8 mapping separately
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: AIReader-v${{ steps.verify.outputs.version }}-mapping-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.verify.outputs.mapping_path }}
+          if-no-files-found: error
+          retention-days: 90
