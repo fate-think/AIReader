@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.aireader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 25
-        versionName = "2.5.0"
+        versionCode = 26
+        versionName = "2.6.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -32,6 +32,10 @@ android {
             storePassword = providers.environmentVariable("RELEASE_STORE_PASSWORD").orNull
             keyAlias = providers.environmentVariable("RELEASE_KEY_ALIAS").orNull
             keyPassword = providers.environmentVariable("RELEASE_KEY_PASSWORD").orNull
+            enableV1Signing = false
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = false
         }
     }
     buildTypes {
