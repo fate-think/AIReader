@@ -32,6 +32,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -179,10 +180,17 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
                     historyId = null
                     apiEditorId = null
                 }, icon = {
+                    val iconColor = LocalContentColor.current
                     when (tab) {
-                        BottomTab.READING -> Icon(painterResource(R.drawable.ic_reading), contentDescription = null)
-                        BottomTab.HISTORY -> Icon(painterResource(R.drawable.ic_history_nav), contentDescription = null)
-                        else -> Text(tab.icon)
+                        BottomTab.READING -> Icon(painterResource(R.drawable.ic_reading),
+                            contentDescription = null, tint = iconColor)
+                        BottomTab.HISTORY -> Icon(painterResource(R.drawable.ic_history_nav),
+                            contentDescription = null, tint = iconColor)
+                        else -> Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                            Text(tab.icon, color = iconColor,
+                                fontSize = if (tab == BottomTab.SETTINGS) 22.sp else 20.sp,
+                                lineHeight = 24.sp, maxLines = 1)
+                        }
                     }
                 }, label = { Text(tab.title, maxLines = 1,
                     overflow = TextOverflow.Ellipsis) }, alwaysShowLabel = true)
