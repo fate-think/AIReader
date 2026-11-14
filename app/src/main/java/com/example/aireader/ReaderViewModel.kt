@@ -502,40 +502,43 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun saveSettings(profileId: String, name: String, settings: ApiSettings,
-                     newKey: String, deleteKey: Boolean) {
+                     newKey: String, deleteKey: Boolean, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {
                 val config = configFrom(settings)
                 apiProfilesRepository.save(profileId, name, config, newKey, deleteKey)
                 _state.value = _state.value.copy(settingsMessage = null)
+                onResult(true)
                 apiNoticeChannel.send("API 配置已保存")
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 _state.value = _state.value.copy(settingsMessage = ApiErrorMapper.message(error))
+                onResult(false)
             }
         }
     }
 
-    fun testConnection(settings: ApiSettings, newKey: String, deleteKey: Boolean) {
+    fun testConnection(settings: ApiSettings, newKey: String, deleteKey: Boolean,
+                       onResult: (String, Boolean) -> Unit) {
         if (testJob?.isActive == true) return
         val key = if (newKey.isNotBlank()) newKey else if (deleteKey) null else selectedApiKey
         if (key.isNullOrBlank()) {
-            _state.value = _state.value.copy(settingsMessage = "请先输入 API Key，再测试连接。")
+            onResult("请先输入 API Key，再测试连接。", false)
             return
         }
         val config = try { configFrom(settings) }
         catch (error: Exception) {
-            _state.value = _state.value.copy(settingsMessage = ApiErrorMapper.message(error))
+            onResult(ApiErrorMapper.message(error), false)
             return
         }
-        _state.value = _state.value.copy(testingConnection = true, settingsMessage = null)
+        _state.value = _state.value.copy(testingConnection = true)
         testJob = viewModelScope.launch {
             try {
                 client.testConnection(config, key, onCallCreated = { testCall = it })
-                _state.value = _state.value.copy(settingsMessage = "连接成功：密钥、模型和响应格式可用。")
+                onResult("连接成功：密钥、模型和响应格式可用。", true)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
-                _state.value = _state.value.copy(settingsMessage = "测试失败：${ApiErrorMapper.message(error)}")
+                onResult("测试失败：${ApiErrorMapper.message(error)}", false)
             } finally {
                 testCall = null
                 testJob = null

@@ -17,6 +17,18 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.withTimeoutOrNull
+
+internal data class ApiEditorSnapshot(val name: String, val settings: ApiSettings) {
+    fun hasUnsavedChanges(name: String, settings: ApiSettings, newKey: String, deleteKey: Boolean): Boolean =
+        this.name != name || this.settings != settings.withoutKeyStatus() ||
+            newKey.isNotEmpty() || deleteKey
+}
+
+private data class ApiTestNotice(val id: Int, val message: String, val success: Boolean)
+
+private fun ApiSettings.withoutKeyStatus(): ApiSettings =
+    copy(hasApiKey = false, keyNeedsReentry = false)
 
 @Composable
 fun SettingsHomeScreen(onOpen: (SettingsDestination) -> Unit, modifier: Modifier = Modifier) {
@@ -170,30 +182,34 @@ fun AboutScreen(modifier: Modifier = Modifier) {
 
 @Composable
 fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel,
-                      onBack: () -> Unit, modifier: Modifier) {
+                      onBack: () -> Unit, snackbarHostState: SnackbarHostState, modifier: Modifier) {
     val selectedProfile = state.apiProfiles.firstOrNull { it.id == state.selectedApiProfileId }
     val initial = state.settings
-    val editorKey = selectedProfile?.id to initial
-    var profileName by remember(selectedProfile?.id) { mutableStateOf(selectedProfile?.name.orEmpty()) }
-    var confirmDiscard by remember(editorKey) { mutableStateOf(false) }
-    var baseUrl by remember(editorKey) { mutableStateOf(initial.baseUrl) }
-    var newApiKey by remember(editorKey) { mutableStateOf("") }
+    val editorId = selectedProfile?.id
+    var savedSnapshot by remember(editorId) {
+        mutableStateOf(ApiEditorSnapshot(selectedProfile?.name.orEmpty(), initial.withoutKeyStatus()))
+    }
+    var profileName by remember(editorId) { mutableStateOf(selectedProfile?.name.orEmpty()) }
+    var confirmDiscard by remember(editorId) { mutableStateOf(false) }
+    var saving by remember(editorId) { mutableStateOf(false) }
+    var baseUrl by remember(editorId) { mutableStateOf(initial.baseUrl) }
+    var newApiKey by remember(editorId) { mutableStateOf("") }
     var showApiKey by remember { mutableStateOf(false) }
-    var deleteApiKey by remember(editorKey) { mutableStateOf(false) }
-    var modelId by remember(editorKey) { mutableStateOf(initial.modelId) }
-    var temperature by remember(editorKey) { mutableStateOf(initial.temperature) }
-    var maxTokens by remember(editorKey) { mutableStateOf(initial.maxOutputTokens) }
-    var streaming by remember(editorKey) { mutableStateOf(initial.streaming) }
-    var sendTemperature by remember(editorKey) { mutableStateOf(initial.sendTemperature) }
-    var useMaxCompletionTokens by remember(editorKey) { mutableStateOf(initial.useMaxCompletionTokens) }
-    var allowHttp by remember(editorKey) { mutableStateOf(initial.allowHttp) }
-    var autoRetry by remember(editorKey) { mutableStateOf(initial.autoRetry) }
-    var retryHttp504 by remember(editorKey) { mutableStateOf(initial.retryHttp504) }
-    var maxRetries by remember(editorKey) { mutableStateOf(initial.maxRetries) }
-    var connectTimeout by remember(editorKey) { mutableStateOf(initial.connectTimeoutSeconds) }
-    var readTimeout by remember(editorKey) { mutableStateOf(initial.readTimeoutSeconds) }
-    var sendReasoningEffort by remember(editorKey) { mutableStateOf(initial.sendReasoningEffort) }
-    var reasoningEffort by remember(editorKey) { mutableStateOf(initial.reasoningEffort) }
+    var deleteApiKey by remember(editorId) { mutableStateOf(false) }
+    var modelId by remember(editorId) { mutableStateOf(initial.modelId) }
+    var temperature by remember(editorId) { mutableStateOf(initial.temperature) }
+    var maxTokens by remember(editorId) { mutableStateOf(initial.maxOutputTokens) }
+    var streaming by remember(editorId) { mutableStateOf(initial.streaming) }
+    var sendTemperature by remember(editorId) { mutableStateOf(initial.sendTemperature) }
+    var useMaxCompletionTokens by remember(editorId) { mutableStateOf(initial.useMaxCompletionTokens) }
+    var allowHttp by remember(editorId) { mutableStateOf(initial.allowHttp) }
+    var autoRetry by remember(editorId) { mutableStateOf(initial.autoRetry) }
+    var retryHttp504 by remember(editorId) { mutableStateOf(initial.retryHttp504) }
+    var maxRetries by remember(editorId) { mutableStateOf(initial.maxRetries) }
+    var connectTimeout by remember(editorId) { mutableStateOf(initial.connectTimeoutSeconds) }
+    var readTimeout by remember(editorId) { mutableStateOf(initial.readTimeoutSeconds) }
+    var sendReasoningEffort by remember(editorId) { mutableStateOf(initial.sendReasoningEffort) }
+    var reasoningEffort by remember(editorId) { mutableStateOf(initial.reasoningEffort) }
     var reasoningExpanded by remember { mutableStateOf(false) }
     val draft = ApiSettings(baseUrl, modelId, temperature, maxTokens, streaming,
         sendTemperature, useMaxCompletionTokens, allowHttp, initial.hasApiKey, initial.keyNeedsReentry,
@@ -205,19 +221,18 @@ fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel,
         maxRetries.toIntOrNull()?.let { it in 0..5 } == true &&
         connectTimeout.toIntOrNull()?.let { it in 10..60 } == true &&
         readTimeout.toIntOrNull()?.let { it in 30..600 } == true
-    val changed = selectedProfile != null && (
-        profileName != selectedProfile.name || baseUrl != initial.baseUrl ||
-        modelId != initial.modelId || temperature != initial.temperature ||
-        maxTokens != initial.maxOutputTokens || streaming != initial.streaming ||
-        sendTemperature != initial.sendTemperature ||
-        useMaxCompletionTokens != initial.useMaxCompletionTokens || allowHttp != initial.allowHttp ||
-        autoRetry != initial.autoRetry || retryHttp504 != initial.retryHttp504 ||
-        maxRetries != initial.maxRetries || connectTimeout != initial.connectTimeoutSeconds ||
-        readTimeout != initial.readTimeoutSeconds ||
-        sendReasoningEffort != initial.sendReasoningEffort ||
-        reasoningEffort != initial.reasoningEffort || newApiKey.isNotEmpty() || deleteApiKey)
+    val changed = selectedProfile != null &&
+        savedSnapshot.hasUnsavedChanges(profileName, draft, newApiKey, deleteApiKey)
     val requestBack = { if (changed) confirmDiscard = true else onBack() }
     BackHandler(onBack = requestBack)
+    var testNotice by remember(editorId) { mutableStateOf<ApiTestNotice?>(null) }
+    var testNoticeId by remember(editorId) { mutableIntStateOf(0) }
+    LaunchedEffect(testNotice) {
+        val notice = testNotice ?: return@LaunchedEffect
+        withTimeoutOrNull(if (notice.success) 2500L else 8000L) {
+            snackbarHostState.showSnackbar(notice.message, duration = SnackbarDuration.Indefinite)
+        }
+    }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TextButton(onClick = requestBack) { Text("← 返回配置列表") }
         Text("基本连接", style = MaterialTheme.typography.titleLarge)
@@ -319,10 +334,24 @@ fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel,
             isError = readTimeout.toIntOrNull()?.let { it in 30..600 } != true,
             modifier = Modifier.fillMaxWidth())
         Button(onClick = { selectedProfile?.let {
-            model.saveSettings(it.id, profileName, draft, newApiKey, deleteApiKey)
-        } }, enabled = valid,
+            val submittedName = profileName
+            val submittedDraft = draft
+            val submittedKey = newApiKey
+            val submittedDelete = deleteApiKey
+            saving = true
+            model.saveSettings(it.id, submittedName, submittedDraft, submittedKey, submittedDelete) { success ->
+                saving = false
+                if (success) {
+                    savedSnapshot = ApiEditorSnapshot(submittedName, submittedDraft.withoutKeyStatus())
+                    if (newApiKey == submittedKey) newApiKey = ""
+                    if (deleteApiKey == submittedDelete) deleteApiKey = false
+                }
+            }
+        } }, enabled = valid && !saving,
             modifier = Modifier.fillMaxWidth()) { Text("保存配置") }
-        OutlinedButton(onClick = { model.testConnection(draft, newApiKey, deleteApiKey) },
+        OutlinedButton(onClick = { model.testConnection(draft, newApiKey, deleteApiKey) { message, success ->
+            testNotice = ApiTestNotice(++testNoticeId, message, success)
+        } },
             enabled = valid && !state.testingConnection, modifier = Modifier.fillMaxWidth()) {
             Text(if (state.testingConnection) "正在测试连接…" else "测试连接")
         }

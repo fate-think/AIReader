@@ -47,10 +47,10 @@ class PromptRepositoryTest {
         }
     }
 
-    @Test fun fourBuiltInsLoadWithExactAssetContents() = runBlocking { withStore { repo, _ ->
+    @Test fun fiveBuiltInsLoadWithExactAssetContents() = runBlocking { withStore { repo, _ ->
         repo.migrateIfNeeded()
         val catalog = repo.catalogs.first()
-        assertEquals(4, catalog.modes.size)
+        assertEquals(5, catalog.modes.size)
         assertEquals(PromptRepository.builtIns.map { it.first }, catalog.modes.map { it.id })
         PromptRepository.builtIns.forEach { (id, filename) ->
             val mode = catalog.modes.single { it.id == id }
@@ -69,6 +69,7 @@ class PromptRepositoryTest {
                 scope = firstScope, produceFile = { file }))
             first.migrateIfNeeded()
             first.save("builtin.full_analysis.v2", "全文分析总结V2", "用户修改的完整提示词\n第二行")
+            first.save("builtin.info_rescue.v1", "信息抢救", "第五条用户修改")
             first.select("builtin.full_analysis.v2")
             firstScope.coroutineContext[Job]!!.cancelAndJoin()
 
@@ -79,6 +80,8 @@ class PromptRepositoryTest {
                 val catalog = reopened.catalogs.first()
                 assertEquals("用户修改的完整提示词\n第二行",
                     catalog.modes.single { it.id == "builtin.full_analysis.v2" }.prompt)
+                assertEquals("第五条用户修改",
+                    catalog.modes.single { it.id == "builtin.info_rescue.v1" }.prompt)
                 assertEquals("builtin.full_analysis.v2", catalog.selectedModeId)
             } finally {
                 secondScope.coroutineContext[Job]!!.cancelAndJoin()
@@ -97,10 +100,22 @@ class PromptRepositoryTest {
             restored.modes.single { it.id == "builtin.keypoints.v1" }.prompt)
     } }
 
+    @Test fun newBuiltInCanBeSelectedEditedAndRestored() = runBlocking { withStore { repo, _ ->
+        repo.migrateIfNeeded()
+        val id = "builtin.info_rescue.v1"
+        repo.select(id)
+        repo.save(id, "信息抢救", "用户修改的提示词")
+        assertEquals(id, repo.catalogs.first().selectedModeId)
+        assertEquals("用户修改的提示词", repo.catalogs.first().modes.single { it.id == id }.prompt)
+        val restored = repo.restoreDefault(id)
+        assertEquals(assetFile("信息抢救.md").readText(Charsets.UTF_8),
+            restored.modes.single { it.id == id }.prompt)
+    } }
+
     @Test fun builtInModeCannotBeDeleted() = runBlocking { withStore { repo, _ ->
         repo.migrateIfNeeded()
         assertTrue(runCatching { repo.delete(PromptRepository.FIRST_BUILT_IN_ID) }.isFailure)
-        assertEquals(4, repo.catalogs.first().modes.size)
+        assertEquals(5, repo.catalogs.first().modes.size)
     } }
 
     @Test fun fiveCustomModesHaveDistinctIdsAndCreationOrder() = runBlocking { withStore { repo, _ ->
@@ -187,6 +202,29 @@ class PromptRepositoryTest {
         assertEquals("旧版自定义正文",
             catalog.modes.single { it.id == "legacy-custom-uuid" }.prompt)
         assertTrue(store.data.first()[stringPreferencesKey("prompt_catalog_v2")] != null)
+    } }
+
+    @Test fun existingCatalogGainsFifthBuiltInWithoutChangingUserData() = runBlocking { withStore { repo, store ->
+        val oldModes = JSONArray()
+        PromptRepository.builtIns.take(4).forEachIndexed { index, (id, filename) ->
+            oldModes.put(JSONObject().put("id", id).put("name", filename.removeSuffix(".md"))
+                .put("prompt", if (index == 0) "原有用户修改" else assetFile(filename).readText(Charsets.UTF_8))
+                .put("builtIn", true).put("assetName", filename).put("createdOrder", index))
+        }
+        oldModes.put(JSONObject().put("id", "existing-custom").put("name", "原有自定义")
+            .put("prompt", "原有自定义正文").put("builtIn", false).put("assetName", "")
+            .put("createdOrder", 4))
+        store.edit { it[stringPreferencesKey("prompt_catalog_v2")] = JSONObject()
+            .put("schemaVersion", 2).put("selectedModeId", "existing-custom")
+            .put("modes", oldModes).toString() }
+
+        repo.migrateIfNeeded()
+        val catalog = repo.catalogs.first()
+        assertEquals(PromptRepository.builtIns.map { it.first }, catalog.modes.take(5).map { it.id })
+        assertEquals("existing-custom", catalog.selectedModeId)
+        assertEquals("原有用户修改", catalog.modes.first().prompt)
+        assertEquals("原有自定义正文", catalog.modes.last().prompt)
+        assertEquals(assetFile("信息抢救.md").readText(Charsets.UTF_8), catalog.modes[4].prompt)
     } }
 
     @Test fun malformedSavedDataIsNotSilentlyReplaced() = runBlocking { withStore { repo, store ->

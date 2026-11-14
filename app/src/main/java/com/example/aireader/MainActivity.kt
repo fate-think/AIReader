@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
@@ -37,8 +38,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
@@ -68,13 +68,8 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(model) {
         model.apiNotices.collect { message ->
-            coroutineScope {
-                val notice = launch {
-                    snackbarHostState.showSnackbar(message, duration = SnackbarDuration.Indefinite)
-                }
-                delay(2500)
-                snackbarHostState.currentSnackbarData?.dismiss()
-                notice.join()
+            withTimeoutOrNull(2500L) {
+                snackbarHostState.showSnackbar(message, duration = SnackbarDuration.Indefinite)
             }
         }
     }
@@ -183,7 +178,16 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
                     settingsDestination = SettingsDestination.HOME
                     historyId = null
                     apiEditorId = null
-                }, icon = { Text(tab.icon) }, label = { Text(tab.title, maxLines = 1,
+                }, icon = {
+                    val iconColor = LocalContentColor.current
+                    val iconRes = when (tab) {
+                        BottomTab.READING -> R.drawable.ic_reading
+                        BottomTab.PROMPTS -> R.drawable.ic_prompt_nav
+                        BottomTab.HISTORY -> R.drawable.ic_history_nav
+                        BottomTab.SETTINGS -> R.drawable.ic_settings_nav
+                    }
+                    Icon(painterResource(iconRes), contentDescription = null, tint = iconColor)
+                }, label = { Text(tab.title, maxLines = 1,
                     overflow = TextOverflow.Ellipsis) }, alwaysShowLabel = true)
             }
         } }
@@ -205,7 +209,7 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
                     onEdit = { id -> apiEditorId = id; settingsDestination = SettingsDestination.API_EDIT },
                     modifier = nestedModifier)
                 SettingsDestination.API_EDIT -> if (editorReady) ApiSettingsEditor(state, model,
-                    onBack = goBackSettings, modifier = modifier)
+                    onBack = goBackSettings, snackbarHostState = snackbarHostState, modifier = modifier)
                     else Box(nestedModifier) {
                         if (state.apiProfilesError != null || state.settingsMessage?.startsWith("无法切换") == true)
                             Text(state.apiProfilesError ?: state.settingsMessage.orEmpty())

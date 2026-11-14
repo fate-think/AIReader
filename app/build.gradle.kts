@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.aireader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 26
-        versionName = "2.6.0"
+        versionCode = 29
+        versionName = "2.6.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -39,6 +39,10 @@ android {
         }
     }
     buildTypes {
+        getByName("debug") {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         getByName("release") {
             isMinifyEnabled = true
             isShrinkResources = true

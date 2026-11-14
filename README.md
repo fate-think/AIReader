@@ -1,93 +1,255 @@
+<div align="center">
+
 # AIReader
 
-原生 Android 阅读助手。提供阅读主页、动态提示词管理、API 设置、本地文章预处理和 OpenAI 兼容 Chat Completions 请求。
+**A native Android AI reading assistant designed to help you read long texts faster, extract key information, and understand more.**
 
-## 技术与构建
+Extract important points section by section, analyze entire texts, or create your own reading workflows with customizable prompts.
 
-Kotlin、Jetpack Compose、Material 3、MVVM/StateFlow、Room。minSdk 26，compileSdk/targetSdk 35。Gradle 8.11.1、AGP 8.9.2、Kotlin/Compose Compiler 2.1.20、KSP 2.1.20-2.0.1、Room 2.7.2、Compose BOM 2025.04.01、JDK 17。
+**Less reading overhead. More insight.**
 
-本机不安装 Android SDK，也不执行 Android 构建。推送到 `main` 或手动运行 [构建工作流](.github/workflows/build-apk.yml)，由 GitHub 托管 Runner 执行 `testDebugUnitTest` 与 `assembleDebug`，并上传 Debug APK。
+**English** · [简体中文](README_zh.md)
 
-## 内部测试 Release APK
+</div>
 
-[独立 Release 工作流](.github/workflows/release.yml) 仅允许在 `main` 手动运行；它使用 JDK 17、项目 Gradle Wrapper，先运行 JVM 单元测试，再执行 `assembleRelease`。R8 代码压缩和资源缩减仅对 Release 开启，Debug 工作流及其签名方式不变。工作流不会创建 GitHub Release 或响应 Tag 推送。
+## Overview
 
-首次运行前，须在 GitHub 仓库 Settings → Environments 手动创建名为 `release` 的 Environment，并将允许部署的分支限定为 `main`。在该 Environment 中配置四个 **Secrets**：`RELEASE_KEYSTORE_BASE64`（原有签名密钥库文件的 Base64）、`RELEASE_STORE_PASSWORD`、`RELEASE_KEY_ALIAS`、`RELEASE_KEY_PASSWORD`；再配置一个 **Variable**：`EXPECTED_RELEASE_CERT_SHA256`。不要将这些凭据复制到普通 Repository Secrets，也不要在对话中发送密钥或密码。如果仓库方案支持 Required reviewers，可为该 Environment 开启人工审批；同时应保护 `main` 的写入权限。Environment Secrets 和分支保护的可用性取决于 GitHub 仓库方案与可见性。[GitHub Environment 文档](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)说明了这些限制。
+AIReader is an AI-assisted reading app for **books, long-form articles, and other lengthy texts**.
 
-`EXPECTED_RELEASE_CERT_SHA256` 应填旧版已安装 APK 的**签名证书** SHA-256（可从旧 APK 执行 `apksigner verify --print-certs 旧版.apk` 核对），不是 APK 文件的 SHA-256。工作流缺少任一配置、签名无效、证书指纹不符或 mapping 缺失时都会失败，不会上传正式 APK。密钥库仅在签名构建步骤解码到 Runner 临时目录，构建结束即清理；密码仅经环境变量传给 Gradle。下载后还可用附带的 `.sha256` 文件核对 APK 完整性。覆盖安装还要求手机已安装版本的 `versionCode` 不高于项目当前值（目前为 25）；发布前请核对实际安装版本。
+If you regularly read book chapters, long articles, study materials, or other text-heavy content, AIReader helps you process that material with large language models (LLMs) and focus on what matters most.
 
-在 Actions 页面选择 **Build signed Release APK → Run workflow → main**。成功后从该次运行的 Artifacts 下载 `AIReader-v<版本>-release-<运行编号>`，其中包含已验证签名的 APK 和 SHA-256 文件；另一个 `AIReader-v<版本>-mapping-<运行编号>` 单独保存 R8 `mapping.txt`。两个 Artifact 设置保留 90 天，可能受仓库或组织更短上限约束；每次发布后应把对应 mapping 下载到受限的长期存储，供将来还原混淆后的崩溃堆栈。
+It offers two primary approaches to reading:
 
-## 数据
+- **Section-by-section key point extraction:** Identify important information throughout a long text while preserving its structure, making it easier to follow individual passages and avoid missing useful details.
+- **Full-text analysis and summarization:** Analyze the text as a whole to understand its main ideas, arguments, and conclusions.
 
-四份内置提示词位于 `app/src/main/assets/prompts/`。内置模式有稳定 ID，可编辑，并可在确认后从 assets 恢复默认；不能删除。提示词管理页的“我的自定义提示词”区域可持续新增、编辑、重命名和删除任意多套模式。删除前会确认；删除当前模式后自动选中第一套内置模式。编辑未保存内容时返回会提醒。
+You can also create custom prompts to build your own workflows for reading, studying, summarizing, or organizing information.
 
-模式列表、创建顺序和当前选择统一保存在 DataStore 中。旧版 `modes` 数据首次读取时迁移；数据解析失败会显示错误并停止写入，避免覆盖已保存的提示词。API 配置列表及当前选择也保存在 DataStore 的单个快照中；每套配置的 API Key 分别使用 Android Keystore 的 AES-GCM 密钥加密后保存，不进入普通界面状态。Android 自动备份已禁用。当前文章草稿只保存在界面状态；成功生成时是否将原文快照写入本机历史，由用户设置决定。
+AIReader is not tied to a specific AI provider. You can connect your own OpenAI-compatible API or prepare the complete prompt and text for use in another AI client, even without an API key.
 
-## 文章预处理
+Generated or manually pasted Markdown results can be edited, previewed, saved, and converted to HTML. You can also open the HTML in a browser and use supported browser text-to-speech features to **listen to your reading reports**.
 
-在阅读页粘贴文章后，点击“文章预处理设置”可调整启用状态、每组合并段数（1–100）、标题识别和编号列表识别。设置通过 DataStore 保存。点击“预览处理结果”可查看完整处理结果、处理前后字符数并复制；关闭预览后输入框仍是原文。
+## Features
 
-预处理会跳过空白行，连续普通自然段按设置数量直接拼接，并为正文、标题和编号列表添加连续的段落编号。“预览处理结果”与“开始阅读”共用 `ArticlePreprocessor.process`。阅读页另有“预览最终发送内容”，仅显示可滚动、可复制的完整 User Message。完整消息由 `buildUserMessage` 拼接，发送为唯一一条 user 消息；不生成 System 或 Developer Message。
+### 1. Key point extraction and full-text analysis
 
-## Markdown 工作区
+AIReader includes **five built-in reading prompts** for different long-text processing needs, including:
 
-阅读页的“AI 阅读结果”始终显示。默认进入“编辑 Markdown”，即使尚未配置 API 或没有文章，也可以直接粘贴、输入和修改外部 Markdown；上方文章输入框与此工作区互不影响。点击“预览 Markdown”会使用现有渲染组件展示当前文本，切回编辑时原文保持不变。生成期间工作区显示流式文本并暂时禁止手动编辑，完成后自动切换到预览。
+- **Key point extraction:** Identify important information throughout the text, following its structure.
+- **Full-text analysis:** Examine the entire text to understand its main ideas, arguments, and overall meaning.
+- **Additional reading workflows:** Select different built-in prompts depending on the kind of analysis you need.
 
-复制、分享、保存 Markdown，以及 HTML 预览、浏览器打开和保存 HTML，都使用工作区中的当前 Markdown。编辑后 HTML 会根据最新内容重新生成；空内容不能执行这些操作。已有手动内容或手动修改过的 AI 报告在新请求覆盖前会要求确认。手动输入、切换模式、预览和导出不会调用 API，也不会自动写入阅读历史；历史仍仅自动保存成功完成的 AI 报告。“清空 Markdown”经确认只清空工作区，并返回空白编辑模式。
+Built-in prompts use Markdown and can be viewed, edited, saved, or restored to their defaults.
 
-“编辑 Markdown”“预览 Markdown”“复制 Markdown”“更多操作”保持两行两列，各按钮使用相同的 24dp 圆角与自适应最小高度，系统大字体下文字可换行。
+You can also create **unlimited custom prompts** based on the built-in examples, enabling workflows such as knowledge organization, concept explanation, detailed summarization, and personalized study.
 
-## API 使用
+> AI-generated results depend on the selected model, prompt, and input text. Verify important claims and details against the original material.
 
-在“设置 → 大模型 API 配置 → 编辑”填写 Base URL、API Key 和 Model ID；可调整 Temperature、最大输出 token、是否发送 Temperature、`max_tokens` 或 `max_completion_tokens`、流式输出。Base URL 默认只接受 HTTPS；如需 HTTP，明确开启“允许 HTTP Base URL”并保存。HTTP 会以明文传输 API Key 和文章内容。粘贴 API Key 时会自动去除首尾空白和换行；密钥中间若含换行则提示重新粘贴。留空新密钥并保存会保留已有密钥；删除密钥需要明确点击删除并保存。密钥丢失或设备迁移后无法解密时需重新输入。文章将发送至用户配置的第三方 API 服务。“测试连接”发送独立的“请只回复 OK。”短请求，并使用设置页当前的流式输出、最大输出 token 和 Temperature 参数设置；可能产生调用费用。若参考 curl 排查连接问题，请确保这些参数也一致。
+### 2. Automatic article preprocessing
 
-“设置 → 大模型 API 配置”可新增任意多套配置，点“使用”切换当前配置，点“编辑”进入对应配置的参数页；可复制参数为新配置，复制时不会复制 API Key。删除配置需要确认，至少保留一套；删除正在使用的配置后自动选择剩余列表中的第一套。阅读页也有配置下拉菜单，显示配置名称和模型，下一次请求使用新选择的配置；正在生成的请求继续使用启动时固定的地址、参数及密钥。旧版单套 API 设置在首次启动时自动迁移为“默认 API 配置”，旧密文直接保留，旧字段暂不删除。若 Keystore 密钥失效，界面提示重新输入该配置的 API Key。
+Before sending text to a model, AIReader automatically preprocesses the article to make its structure easier to reference.
 
-API 配置新增、切换、复制、删除及成功保存使用约 2.5 秒后自动消失的 Snackbar 提示；进入页面或返回列表不会回放旧的成功提示。
+Preprocessing supports:
 
-“思考深度”区域提供独立的“发送思考深度参数”开关和 Max、XHigh、High、Medium、Low、Minimal、None 七档。默认关闭发送、默认选择 Max。开启后，Chat Completions 请求 JSON 顶层添加所选的 `reasoning_effort` 原始值；关闭后完全省略该字段，但保留上次选中的档位。每套 API 配置独立保存开关和档位。测试连接使用当前编辑配置的参数与密钥，可能产生少量费用；服务端是否支持所选档位以实际响应为准。
+- Numbered paragraph markers.
+- Numbered heading markers.
+- Configurable grouping of natural paragraphs.
+- Combining the processed text with the selected prompt into the final message sent to the model.
 
-阅读页“开始阅读”会固定当前提示词、原文、预处理设置和 API 设置的快照，发送至 `/chat/completions`。流式内容按顺序追加；点击“停止生成”会取消请求并保留已生成文本。错误不会清空已有内容；可复制结果或重新生成。自动重定向已禁用。
+**By default, every three natural paragraphs are grouped together.**
 
-每套 API 配置编辑页的“网络稳定性”区域可调整自动重试、最大重试次数（0–5）、连接超时（10–60 秒）和读取空闲超时（30–600 秒）；默认分别为开启、2 次、20 秒和 180 秒。这些参数继续分别保存在各套 API 配置中。临时 429、500、502、503 及确认未建立连接的失败可在尚未收到生成正文时按指数退避重试；配额不足、认证或参数错误、TLS 错误、读取超时和已开始输出的流不会自动重试。504 可能已由上游处理，默认提示手动重新生成；只有同时开启自动重试和“允许重试 504”才会有限重试，可能产生重复调用费用。服务端的 `Retry-After` 优先于指数退避；要求等待超过 60 秒时停止自动重试。等待重试时可取消。测试连接始终只发送一次请求。
+You can change the grouping value in **Article Preprocessing Settings**, using any value from **1 to 100**.
 
-阅读报告支持标题、粗体、斜体、嵌套列表、引用、代码块、表格及用户点击的网页链接。宽表格可横向滚动。生成过程中先以纯文本显示增量内容，结束后渲染 Markdown；用户向上滚动时暂停自动跟随，可点击“回到底部”恢复。结果可复制、通过系统分享面板分享，或通过系统文件选择器保存为 UTF-8 Markdown 文件。清空 Markdown 前会确认。成功完成的报告默认写入本机阅读历史；文章与报告不会自动上传到其他服务。
+| Value | Behavior |
+| --- | --- |
+| `1` | One natural paragraph per group |
+| `2` | Two natural paragraphs per group |
+| `3` | Three natural paragraphs per group (default) |
+| `5` | Five natural paragraphs per group |
 
-“设置 → 夜间模式”提供跟随系统、浅色模式和深色模式，默认跟随系统。选择后立即应用到全部 Compose 页面及系统栏，并以独立的 `theme_mode` 键保存在现有 DataStore 中。Markdown 的代码背景、表格边框和链接颜色跟随 Material 3 配色；主题切换不会修改文章、提示词或阅读结果，也不会重新发起 AI 请求。
+Smaller grouping values can provide more granular references to the text, while larger values reduce the number of groups.
 
-阅读结果的“更多操作”包含 HTML 预览、浏览器打开和保存 HTML。HTML 由 CommonMark 解析库及表格、删除线扩展生成完整 HTML5 文档；字号为 14–36px，默认 24px，使用 DataStore 保存。仅在用户操作时于后台转换，同一报告和字号的结果可复用。预览使用禁用 JavaScript、文件访问及网络加载的 WebView；导出通过系统文件选择器写入 UTF-8 HTML。浏览器打开时，应用将 HTML 写入缓存，再通过 FileProvider 的 `content://` URI 和系统 `ACTION_VIEW` 交给默认处理程序。部分浏览器可能不支持这种本地 HTML URI；可在 App 内预览，或保存文件后使用支持本地文件的浏览器打开。HTML 不包含远程资源，图片仅保留替代文字。
+### 3. Custom LLM API connections
 
-应用内 HTML 预览严格使用当前 App 的浅色或深色配色，切换主题时仅重新生成本地 HTML。保存和浏览器打开的独立 HTML 使用 `prefers-color-scheme`，由阅读器或浏览器环境决定配色；字号设置继续生效。
+AIReader supports user-configured **OpenAI-compatible Chat Completions APIs**.
 
-## 阅读历史
+Features include:
 
-成功生成且内容非空的报告默认自动保存到本机 Room 数据库。每次请求使用固定 UUID 作为主键，重复完成通知不会生成重复历史；失败、停止生成和未完成的流不会保存。保存时记录当时的模式名称、模型与 API 配置名称快照，不依赖后续配置是否仍存在。标题取原始文章第一行非空文本的前 50 字；用户可在详情中重命名。
+- Multiple independent API profiles.
+- Custom model endpoints and model names.
+- Encrypted API-key storage.
+- Configurable reasoning effort where supported by the model.
+- Adjustable network timeouts and automatic retries.
+- Streaming model responses via Server-Sent Events (SSE).
+- The ability to stop generation.
 
-新历史在“保存文章原文”开启时还保存该次请求实际发送的完整 User Message；关闭时不保存此快照。历史详情可只读查看并复制快照；旧历史或未保存快照的记录显示“该历史记录未保存最终发送内容。”，不会按当前提示词重新构造。历史详情也可将对应报告转换为 HTML 并尝试通过系统浏览器打开。
+API keys are protected using Android Keystore-based encryption.
 
-“设置 → 阅读历史与数据管理”提供“自动保存阅读历史”和“保存文章原文”两个开关，默认开启，使用 DataStore 持久化。关闭自动保存不删除旧记录；关闭保存原文后，新记录仍保留完整 Markdown 报告，但不保存文章。两个选项在请求开始时固定。保存失败会提示用户，当前生成结果继续留在阅读页。
+AIReader does not include free model usage credits. Availability, rate limits, and charges depend on your selected AI provider.
 
-通过底栏“历史”可直接进入原有历史列表，也可从“设置 → 阅读历史与数据管理 → 查看阅读历史”进入同一列表。列表可按标题或阅读模式名称搜索、查看按创建时间倒序的摘要、打开完整报告、多选删除或确认后清空全部。列表通过 Room Flow 仅查询标题、时间、模式、模型及前 160 字预览；完整文章与 Markdown 只在打开详情时按 ID 读取。详情复用当前 Markdown 展示、HTML 转换与预览、Markdown/HTML 导出，也支持复制、分享、重命名和确认删除。历史页面不发起 AI 请求，不改动当前文章草稿或报告。
+### 4. Use AIReader without an API key
 
-## 设置导航
+**An API connection is optional if you only need AIReader to prepare prompts and text for another AI client.**
 
-底部导航依次为“阅读 / 提示词 / 历史 / 设置”。“历史”直接打开原有历史列表，详情返回该列表；“设置”打开菜单首页，仍显示“大模型 API 配置”“夜间模式”“阅读历史与数据管理”“关于”四项。设置内的“阅读历史与数据管理”继续负责历史保存与数据清理，也可进入同一历史列表。API 配置列表可进入单套配置编辑页；网络稳定性参数继续归属该套配置。离开有未保存改动的 API 编辑页前会提示确认。设置内的历史详情依次返回历史列表和数据管理页；设置二级页面的系统返回键回到上一级。“关于”从应用包信息读取实际版本号，并说明本机历史、API Key 保存及用户主动导出与分享。
+To use this workflow:
 
-历史可能包含敏感文章、报告和最终发送内容快照，只保存在应用私有数据库，不保存 API Key，也不上传服务器。应用已禁用 Android 自动备份；卸载应用通常会删除本机历史，不保证卸载后恢复。Room 数据库当前为 schema version 2，通过显式 `MIGRATION_1_2` 为旧历史添加默认 null 的 `finalUserMessage` 列；后续升级须提供明确的 Migration，不启用破坏性迁移。
+1. Choose a built-in or custom prompt.
+2. Paste a book chapter, article, or other text.
+3. Adjust preprocessing settings if needed.
+4. Tap **Preview Final Sent Content**.
+5. Copy the complete content into another AI client.
+6. Generate the response using that client.
 
-## 测试
+This lets you benefit from AIReader's prompt management and text preprocessing without configuring an API connection.
 
-GitHub Actions 运行 `testDebugUnitTest`。提示词管理、预处理与设置测试继续保留；MockWebServer 测试覆盖 URL、单条 user 消息、参数、流式与普通响应、错误处理、取消及重定向。多配置测试覆盖旧设置与密文迁移、重复迁移、配置及密钥隔离、选择持久化、复制与删除、并发新增、测试连接和请求快照。主题测试覆盖模式选择、持久化、旧配置、未知值与 HTML 配色；思考深度、网络重试和 HTML 导出测试继续保留。界面切换、系统栏、SSE 期间切换主题、WebView、浏览器兼容性、系统分享与文件选择器需要通过 GitHub Actions 构建 APK 后在真机验证。
+To make the result easier to copy back into AIReader, you can add an output rule like this to your prompt:
 
-阅读历史 JVM 单元测试覆盖请求快照、标题和保存设置；`ReadingHistoryDatabaseTest` 是 Android 设备测试，覆盖 Room 的幂等插入、排序、摘要、长报告、搜索、详情、重命名、删除及版本 1 到 2 的迁移。当前 Actions 只执行 `testDebugUnitTest`，不会执行 `connectedDebugAndroidTest`；Room 设备测试及界面操作仍需在 Android 设备上验证。Actions 构建生成的 Room schema JSON 应补交到仓库，供后续迁移测试使用。
+```markdown
+## Output Format
 
-设置导航新增 JVM 测试覆盖四菜单顺序和各二级页面返回路径；实际 Compose 点击、未保存确认、较大字体与系统返回键仍需 APK 在真机上验证。
+Return the complete response in Markdown format,
+enclosed in a single Markdown code block.
+```
 
-底栏顺序与页面标识另有轻量 JVM 测试；历史底栏入口及跨页面返回行为仍需在真机验证。
+Copy the Markdown content from the resulting code block and paste it into AIReader's Markdown workspace. You can then preview, edit, or convert it to HTML.
 
-第十阶段的 `MarkdownWorkspaceTest` 覆盖空白工作区、手动内容保留、编辑与预览切换、覆盖确认策略、流式文本与完成状态、停止和失败、清空范围、HTML 转换读取最新文本，以及已保存历史快照不受后续编辑影响。Compose 点击行为、系统剪贴板、文件导出和真实 SSE 流仍需在 Actions 构建后用真机验证。
+> When using another AI client, you submit the text directly to that service. Check its privacy policy, input limits, and usage terms.
 
-## Wrapper 说明
+### 5. Markdown reading workspace
 
-仓库内的 `gradle-wrapper.jar` 与 Gradle 官方发布的 Wrapper JAR SHA-256 校验值一致（`2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046`）。实际 CI 构建结果以 GitHub Actions 为准。
+AIReader includes a Markdown workspace for viewing and working with reading results.
+
+When you tap **Start Reading**, the app sends a request to the configured model API and displays the streamed response in the workspace.
+
+The workspace supports:
+
+- Markdown editing and preview.
+- Copying reading reports.
+- Pasting Markdown generated by external AI clients.
+- Converting Markdown into HTML.
+- Previewing HTML inside the app.
+- Exporting HTML files.
+- Opening HTML in an external browser.
+
+This means the workspace is useful both for reports generated directly through the API and for results obtained from other AI tools.
+
+### 6. Read or listen in your browser
+
+One particularly useful workflow is turning AI-generated reading reports into content you can listen to.
+
+After generating or pasting a Markdown report, select **More Actions → Open in Browser**. AIReader converts the content to HTML and opens it in a browser.
+
+**Microsoft Edge** is a recommended option because it offers a **Read aloud** feature on supported versions.
+
+A typical workflow is:
+
+1. Generate or paste a Markdown reading report in AIReader.
+2. Select **More Actions → Open in Browser**.
+3. View the converted HTML in Microsoft Edge.
+4. Use the browser's **Read aloud** feature to listen to the text.
+
+This is useful for listening to summaries or key points from books and long articles while giving your eyes a break.
+
+**Note:** Text-to-speech is provided by the external browser, not by AIReader itself. Availability, voices, and controls depend on the browser and version you use.
+
+### 7. Reading history
+
+AIReader stores reading history locally so that you can revisit previous reports.
+
+Depending on the data saved with each entry, you can:
+
+- Review saved Markdown reports.
+- View or open HTML reading content.
+- Access the original article if it was saved.
+- Inspect the final content sent to the model if a request snapshot was recorded.
+- Manage and clear all reading history.
+
+Saving the original article is optional.
+
+### 8. Interface and appearance
+
+- Native Android application.
+- Built with Jetpack Compose and Material 3.
+- Four main navigation tabs: **Reading · Prompts · History · Settings**.
+- Light, dark, and system theme support.
+
+## How to use
+
+### Option 1: Read with a configured API
+
+1. Add an LLM API configuration under Settings.
+2. Select a built-in or custom prompt for key point extraction, full-text analysis, or another reading task.
+3. Paste a book chapter, long article, or other text into the Reading screen.
+4. Adjust article preprocessing settings as needed.
+5. Tap **Start Reading**.
+6. Review the generated response in the Markdown workspace.
+7. Edit, copy, save, export, or open the report in a browser for reading or text-to-speech.
+
+### Option 2: Use another AI client without configuring an API
+
+1. Select a prompt and paste your text.
+2. Tap **Preview Final Sent Content**.
+3. Copy the prepared content into another AI client.
+4. Generate a Markdown response.
+5. Paste the Markdown result into AIReader's workspace.
+6. Preview it in the app or convert it to HTML for browser reading and text-to-speech.
+
+## Install
+
+Install a signed Release APK built from the repository's GitHub Actions workflow or obtained from the project's distribution channel, if one is available.
+
+Android may require permission to install APKs from your chosen source. For in-place updates, the application ID and signing identity must match the existing installation, and the new `versionCode` must satisfy Android's upgrade requirements.
+
+**Debug and Release can be installed side by side** when the Debug build uses a separate `.debug` application ID suffix. Their private app data is separate.
+
+## Build
+
+The project uses **Kotlin, Jetpack Compose, Material 3, Gradle, Room, DataStore, and OkHttp**.
+
+Build with the repository's Gradle wrapper in a correctly configured Android SDK/JDK environment:
+
+```bash
+./gradlew assembleDebug
+./gradlew assembleRelease
+```
+
+Release builds require signing credentials supplied through environment variables. The GitHub Actions workflows are intended for manually triggered builds:
+
+- **Debug** — development and testing APK.
+- **Release** — R8 code optimization and resource shrinking, signed APK verification, and separate R8 mapping artifact.
+
+### Release signing
+
+The Release workflow uses a protected GitHub Actions **`release` Environment**. Configure these Environment Secrets:
+
+| Secret | Purpose |
+| --- | --- |
+| `RELEASE_KEYSTORE_BASE64` | Base64-encoded release keystore |
+| `RELEASE_STORE_PASSWORD` | Keystore password |
+| `RELEASE_KEY_ALIAS` | Signing key alias |
+| `RELEASE_KEY_PASSWORD` | Signing key password |
+
+Configure `EXPECTED_RELEASE_CERT_SHA256` as an Environment Variable to verify the **signing certificate fingerprint**, not the SHA-256 hash of the keystore file.
+
+Keep the keystore and passwords outside Git. Base64 is encoding, **not encryption**. Protect the release Environment, the main branch, and release tags. Never commit secrets or share private signing material in issues or logs.
+
+## Project notes
+
+- **Purpose:** AI-assisted reading of books, long articles, and other text-heavy content, with key point extraction, full-text analysis, and customizable reading workflows.
+- **Navigation:** Reading · Prompts · History · Settings.
+- **Privacy:** Reading history and model credentials are stored locally. When you submit an API reading request, the article and associated prompt content are sent to your configured model endpoint. If you use an external AI client, that provider's data-handling policies apply.
+- **Data management:** Original article storage is optional; local reading history can be managed or cleared.
+- **Development:** Use the `dev` branch for testing, then merge verified changes into `main` for Release builds.
+- **Contributor instructions:** See [AGENTS.md](AGENTS.md) for repository-specific engineering conventions.
+
+## Feedback
+
+Bug reports and feature suggestions are welcome through the repository's issue tracker, if enabled. Do not include API keys, private article contents, or signing credentials in reports.
+
+## License
+
+AIReader is licensed under the [Apache License, Version 2.0](LICENSE).
+
+You may use, modify, and distribute this project, including for commercial purposes, subject to the terms and conditions of the license. When redistributing it, retain required copyright and license notices and identify modified files as required by the license.
+
+See [LICENSE](LICENSE) for the full license text.
