@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.aireader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 29
-        versionName = "2.6.5"
+        versionCode = 31
+        versionName = "2.6.8"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
