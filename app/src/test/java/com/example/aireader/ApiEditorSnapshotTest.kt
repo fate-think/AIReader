@@ -27,4 +27,16 @@ class ApiEditorSnapshotTest {
         assertTrue(afterSave.hasUnsavedChanges("新名称", submitted.copy(modelId = "later"), "", false))
         assertTrue(afterSave.hasUnsavedChanges("新名称", submitted, "later-key", false))
     }
+
+    @Test fun newFormStartsCleanAndRepeatedKeySavesResetDirtyState() {
+        val fresh = ApiSettings()
+        val newBaseline = ApiEditorSnapshot("", fresh)
+        assertFalse(newBaseline.hasUnsavedChanges("", fresh, "", false))
+        assertTrue(newBaseline.hasUnsavedChanges("新配置", fresh, "first-key", false))
+        val savedNew = ApiEditorSnapshot("新配置", fresh)
+        assertFalse(savedNew.hasUnsavedChanges("新配置", fresh, "", false))
+        assertTrue(savedNew.hasUnsavedChanges("新配置", fresh, "second-key", false))
+        val savedAgain = ApiEditorSnapshot("新配置", fresh)
+        assertFalse(savedAgain.hasUnsavedChanges("新配置", fresh, "", false))
+    }
 }

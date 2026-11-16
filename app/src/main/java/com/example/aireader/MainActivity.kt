@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.material3.*
@@ -78,6 +79,7 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
     var page by rememberSaveable { mutableStateOf(BottomTab.READING.index) }
     var settingsDestination by rememberSaveable { mutableStateOf(SettingsDestination.HOME) }
     var apiEditorId by rememberSaveable { mutableStateOf<String?>(null) }
+    var apiCreating by rememberSaveable { mutableStateOf(false) }
     var historyId by rememberSaveable { mutableStateOf<String?>(null) }
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     var creating by rememberSaveable { mutableStateOf(false) }
@@ -97,8 +99,9 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
         settingsDestination = settingsDestination.parent() ?: SettingsDestination.HOME
         if (settingsDestination != SettingsDestination.HISTORY_DETAIL) historyId = null
         if (settingsDestination != SettingsDestination.API_EDIT) apiEditorId = null
+        if (settingsDestination != SettingsDestination.API_EDIT) apiCreating = false
     }
-    val editorReady = state.selectedApiProfileId == apiEditorId && apiEditorId != null
+    val editorReady = apiCreating || state.selectedApiProfileId == apiEditorId && apiEditorId != null
     BackHandler(enabled = page == BottomTab.HISTORY.index && historyId != null &&
         historyPreviewMarkdown == null) { historyId = null }
     BackHandler(enabled = page == BottomTab.SETTINGS.index && settingsDestination != SettingsDestination.HOME &&
@@ -166,7 +169,8 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
                     page == BottomTab.READING.index -> "AI 阅读助手";
                     page == BottomTab.PROMPTS.index -> "提示词管理";
                     page == BottomTab.HISTORY.index -> if (historyId == null) "阅读历史" else "历史报告";
-                    else -> settingsDestination.title }, style = MaterialTheme.typography.headlineSmall,
+                    else -> if (settingsDestination == SettingsDestination.API_EDIT && apiCreating)
+                        "新增 API 配置" else settingsDestination.title }, style = MaterialTheme.typography.headlineSmall,
                     modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         } },
@@ -207,9 +211,11 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
                     onOpen = { settingsDestination = it }, modifier = nestedModifier)
                 SettingsDestination.API_LIST -> ApiSettingsList(state, model,
                     onEdit = { id -> apiEditorId = id; settingsDestination = SettingsDestination.API_EDIT },
+                    onAdd = { apiCreating = true; apiEditorId = null; settingsDestination = SettingsDestination.API_EDIT },
                     modifier = nestedModifier)
                 SettingsDestination.API_EDIT -> if (editorReady) ApiSettingsEditor(state, model,
-                    onBack = goBackSettings, snackbarHostState = snackbarHostState, modifier = modifier)
+                    isNew = apiCreating, onBack = goBackSettings, onSaved = goBackSettings,
+                    snackbarHostState = snackbarHostState, modifier = Modifier.fillMaxSize().padding(padding))
                     else Box(nestedModifier) {
                         if (state.apiProfilesError != null || state.settingsMessage?.startsWith("无法切换") == true)
                             Text(state.apiProfilesError ?: state.settingsMessage.orEmpty())
@@ -281,8 +287,8 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
     val htmlExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/html")) {
         model.completeHtmlExport(it)
     }
-    val active = state.status in setOf(ReadingStatus.Loading, ReadingStatus.WaitingForRetry,
-        ReadingStatus.Retrying, ReadingStatus.Streaming)
+    val active = state.status in setOf(ReadingStatus.Loading, ReadingStatus.WaitingResponse,
+        ReadingStatus.Thinking, ReadingStatus.WaitingForRetry, ReadingStatus.Retrying, ReadingStatus.Streaming)
     val htmlReady = MarkdownWorkspace.canUseHtml(state.result, active)
     fun requestReading() {
         if (MarkdownWorkspace.requiresOverwriteConfirmation(state.result, state.markdownSource)) {
@@ -311,14 +317,17 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
             resultScroll.scrollToItem(lastChunk, 100_000)
         }
     }
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    var finalPreview by remember { mutableStateOf<FinalRequestPreview?>(null) }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
         val currentApi = state.apiProfiles.firstOrNull { it.id == state.selectedApiProfileId }
-        Text("当前 API 配置：${currentApi?.name ?: "未载入"}",
-            style = MaterialTheme.typography.titleMedium)
+        Text("阅读配置", style = MaterialTheme.typography.titleMedium)
+        Text("${currentApi?.name ?: "未载入"} · ${state.settings.modelId.ifBlank { "未配置模型" }}",
+            style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Box {
-            OutlinedButton(onClick = { apiExpanded = true }, enabled = state.apiProfiles.isNotEmpty(),
-                modifier = Modifier.fillMaxWidth()) {
-                Text("切换配置 · ${currentApi?.config?.modelId?.ifBlank { "未配置模型" } ?: "未配置模型"}")
+            TextButton(onClick = { apiExpanded = true }, enabled = state.apiProfiles.isNotEmpty()) {
+                Text("切换 API 配置  ⌄")
             }
             DropdownMenu(expanded = apiExpanded, onDismissRequest = { apiExpanded = false }) {
                 state.apiProfiles.forEach { profile ->
@@ -327,14 +336,12 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
                 }
             }
         }
-        Text("阅读模式", style = MaterialTheme.typography.titleMedium)
         if (state.loaded && state.modes.isEmpty()) Text("提示词数据读取失败：${state.storageError ?: "未知错误"}",
             color = MaterialTheme.colorScheme.error)
-        Text("当前模型：${state.settings.modelId.ifBlank { "未配置" }}",
-            style = MaterialTheme.typography.bodySmall)
         Box {
-            OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-                Text(state.modes.firstOrNull { it.id == state.selectedModeId }?.name ?: "选择阅读模式")
+            TextButton(onClick = { expanded = true }) {
+                Text("${state.modes.firstOrNull { it.id == state.selectedModeId }?.name ?: "选择阅读模式"}  ⌄",
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 Text("内置阅读模式", modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -348,12 +355,18 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
                     onClick = { model.selectMode(mode.id); expanded = false }) }
             }
         }
+        }
+        ElevatedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            Text("文章内容", style = MaterialTheme.typography.titleMedium)
+            Text("${state.article.length} 字", style = MaterialTheme.typography.bodySmall)
+        }
         OutlinedTextField(value = state.article, onValueChange = model::setArticle,
-            label = { Text("文章内容") }, placeholder = { Text("在这里粘贴文章") },
+            placeholder = { Text("在这里粘贴文章") },
             maxLines = 10,
             modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp, max = 280.dp))
-        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-            Text("字符数：${state.article.length}")
+        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
             TextButton(onClick = model::clearArticle, enabled = state.article.isNotEmpty()) { Text("清空文章") }
         }
         OutlinedButton(onClick = { showPreprocessSettings = true }, modifier = Modifier.fillMaxWidth()) {
@@ -363,7 +376,6 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
             enabled = state.article.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
             Text("预览处理结果")
         }
-        var finalPreview by remember { mutableStateOf<FinalRequestPreview?>(null) }
         OutlinedButton(onClick = { finalPreview = model.finalRequestPreview() },
             enabled = state.article.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
             Text("预览最终发送内容")
@@ -376,7 +388,9 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
             OutlinedButton(onClick = { requestReading() }, enabled = state.article.isNotBlank(),
                 modifier = Modifier.fillMaxWidth()) { Text("重新生成") }
         }
-        HorizontalDivider()
+        } }
+        ElevatedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("AI 阅读结果", style = MaterialTheme.typography.titleMedium)
         Text(when (state.status) {
             ReadingStatus.Idle -> when (state.markdownSource) {
@@ -385,18 +399,34 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
                 else -> "等待开始"
             }
             ReadingStatus.Loading -> "正在连接…"
+            ReadingStatus.WaitingResponse -> "等待模型响应…"
+            ReadingStatus.Thinking -> "正在思考…"
             ReadingStatus.WaitingForRetry -> state.retryMessage ?: "等待重试…"
             ReadingStatus.Retrying -> state.retryMessage ?: "正在重试…"
             ReadingStatus.Streaming -> "正在生成…"
-            ReadingStatus.Completed -> "已完成"
-            ReadingStatus.Cancelled -> "已停止"
+            ReadingStatus.Completed -> "生成完成"
+            ReadingStatus.Cancelled -> "已停止生成"
             ReadingStatus.Interrupted -> "生成中断"
             ReadingStatus.RetryExhausted -> "重试次数已用尽"
-            ReadingStatus.Error -> "请求失败"
+            ReadingStatus.Error -> "生成失败"
         })
         if (active) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         state.readingError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         state.historySaveMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        if (state.thinking.isNotEmpty()) {
+            var thinkingExpanded by remember { mutableStateOf(false) }
+            ElevatedCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    TextButton(onClick = { thinkingExpanded = !thinkingExpanded }) {
+                        Text(if (thinkingExpanded) "思考过程  ⌃" else "思考过程  ⌄")
+                    }
+                    if (thinkingExpanded) SelectionContainer {
+                        Text(state.thinking, modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp)
+                            .verticalScroll(rememberScrollState()))
+                    }
+                }
+            }
+        }
         Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min),
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = state.markdownViewMode == MarkdownViewMode.EDIT,
@@ -503,6 +533,7 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
                 enabled = state.htmlFontSizePx < 36) { Text("A+") }
         }
         state.resultActionMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        } }
         finalPreview?.let { request ->
             FinalRequestPreviewDialog(request, onDismiss = { finalPreview = null })
         }

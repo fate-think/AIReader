@@ -74,6 +74,18 @@ class MarkdownWorkspaceTest {
         assertEquals("已有文本", partial.withGeneratedMarkdown("已有文本", ReadingStatus.Interrupted).result)
     }
 
+    @Test fun thinkingIsSessionOnlyAndStaysSeparateFromMarkdown() {
+        val active = ReaderState(thinking = "模型思考", result = "# 正文",
+            markdownSource = MarkdownSource.AI, status = ReadingStatus.Streaming)
+        val stopped = active.withGeneratedMarkdown(active.result, ReadingStatus.Cancelled)
+        val failed = active.withGeneratedMarkdown(active.result, ReadingStatus.Interrupted)
+        assertEquals("模型思考", stopped.thinking)
+        assertEquals("模型思考", failed.thinking)
+        assertEquals("# 正文", stopped.result)
+        assertEquals("", active.withMarkdownGenerationStarted().thinking)
+        assertEquals("", active.withClearedMarkdown().thinking)
+    }
+
     @Test fun failureWithoutOutputReturnsToBlankEditor() {
         val failed = ReaderState().withMarkdownGenerationStarted()
             .withGeneratedMarkdown("", ReadingStatus.Error)

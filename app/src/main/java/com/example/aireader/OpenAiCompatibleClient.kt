@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -38,6 +39,8 @@ data class ApiConfig(
 )
 
 sealed interface ReadingEvent {
+    data object Connected : ReadingEvent
+    data class Thinking(val value: String) : ReadingEvent
     data class Text(val value: String) : ReadingEvent
     data class RetryWaiting(val attempt: Int, val maxRetries: Int, val seconds: Int) : ReadingEvent
     data class Retrying(val attempt: Int, val maxRetries: Int) : ReadingEvent
@@ -100,6 +103,39 @@ class OpenAiCompatibleClient(
         return url.newBuilder().encodedPath(endpointPath).build()
     }
 
+    fun modelsEndpoint(baseUrl: String, allowHttp: Boolean = false): HttpUrl {
+        val chat = endpoint(baseUrl, allowHttp)
+        return chat.newBuilder().removePathSegment(chat.pathSize - 1)
+            .removePathSegment(chat.pathSize - 2).addPathSegment("models").build()
+    }
+
+    suspend fun listModels(config: ApiConfig, apiKey: String?): List<String> = withContext(Dispatchers.IO) {
+        config.network.validate()
+        val request = Request.Builder().url(modelsEndpoint(config.baseUrl, config.allowHttp))
+            .apply { apiKey?.takeIf { it.isNotBlank() }?.let {
+                header("Authorization", "Bearer ${ApiKeyNormalizer.normalize(it)}")
+            } }.get().build()
+        val call = configuredClient(config.copy(streaming = false)).newCall(request)
+        try {
+            call.execute().use { response ->
+                if (!response.isSuccessful) throw ApiException(when (response.code) {
+                    401 -> "获取模型列表认证失败，请检查 API Key。"
+                    403 -> "当前密钥无权获取模型列表。"
+                    404 -> "当前服务可能不支持模型列表接口，请手动填写 Model ID。"
+                    else -> ApiErrorMapper.httpStatus(response.code)
+                })
+                val raw = response.body?.string() ?: throw ApiException("模型列表响应为空。")
+                try {
+                    val rows = JSONObject(raw).getJSONArray("data")
+                    (0 until rows.length()).mapNotNull { index ->
+                        rows.optJSONObject(index)?.takeIf { !it.isNull("id") }
+                            ?.optString("id")?.trim()?.takeIf { it.isNotEmpty() }
+                    }.distinct()
+                } catch (_: JSONException) { throw ApiException("无法解析模型列表，请手动填写 Model ID。") }
+            }
+        } finally { call.cancel() }
+    }
+
     fun validate(config: ApiConfig, apiKey: String): HttpUrl {
         ApiKeyNormalizer.normalize(apiKey)
         try { config.network.validate() }
@@ -143,6 +179,7 @@ class OpenAiCompatibleClient(
         var cumulativeWait = 0L
         while (true) {
             var hasText = false
+            var hasDelta = false
             val call = configuredClient(config).newCall(request)
             onCallCreated(call)
             try {
@@ -159,11 +196,17 @@ class OpenAiCompatibleClient(
                         throw HttpFailure(response.code, response.header("Retry-After"), temporary, hint)
                     }
                     val body = response.body ?: throw ApiException("API 返回空响应。")
+                    emit(Result.success(ReadingEvent.Connected))
                     if (config.streaming) {
                         for (event in SseParser.events(body.charStream().buffered())) {
                             when (event) {
                                 is ReadingEvent.Text -> {
                                     hasText = hasText || event.value.isNotEmpty()
+                                    hasDelta = hasDelta || event.value.isNotEmpty()
+                                    emit(Result.success(event))
+                                }
+                                is ReadingEvent.Thinking -> {
+                                    hasDelta = hasDelta || event.value.isNotEmpty()
                                     emit(Result.success(event))
                                 }
                                 ReadingEvent.Finished -> {
@@ -193,7 +236,7 @@ class OpenAiCompatibleClient(
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (error: IOException) {
-                val safeToRetry = !hasText && (error is HttpFailure && error.temporary ||
+                val safeToRetry = !hasDelta && (error is HttpFailure && error.temporary ||
                     error is ConnectException || error is UnknownHostException || error is NoRouteToHostException)
                 if (!safeToRetry || maxRetries == 0) {
                     emit(Result.failure(error))

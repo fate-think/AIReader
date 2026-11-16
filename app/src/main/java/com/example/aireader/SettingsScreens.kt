@@ -1,7 +1,11 @@
 package com.example.aireader
 
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
@@ -18,6 +22,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.launch
 
 internal data class ApiEditorSnapshot(val name: String, val settings: ApiSettings) {
     fun hasUnsavedChanges(name: String, settings: ApiSettings, newKey: String, deleteKey: Boolean): Boolean =
@@ -57,7 +62,7 @@ fun SettingsHomeScreen(onOpen: (SettingsDestination) -> Unit, modifier: Modifier
 
 @Composable
 fun ApiSettingsList(state: ReaderState, model: ReaderViewModel,
-                    onEdit: (String) -> Unit, modifier: Modifier = Modifier) {
+                    onEdit: (String) -> Unit, onAdd: () -> Unit, modifier: Modifier = Modifier) {
     var pendingDelete by remember { mutableStateOf<ApiProfile?>(null) }
     LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(16.dp)) {
@@ -96,7 +101,7 @@ fun ApiSettingsList(state: ReaderState, model: ReaderViewModel,
             }
         }
         item {
-            OutlinedButton(onClick = { model.addApiProfile() }, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
                 Text("新增 API 配置")
             }
             state.settingsMessage?.let { Text(it) }
@@ -166,6 +171,13 @@ fun HistoryDataSettingsScreen(state: ReaderState, model: ReaderViewModel,
 @Composable
 fun AboutScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    var linkError by remember { mutableStateOf(false) }
+    fun openLink(url: String) {
+        linkError = try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            false
+        } catch (_: Exception) { true }
+    }
     val version = remember(context) {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
             .getOrNull() ?: "无法读取版本信息"
@@ -175,17 +187,33 @@ fun AboutScreen(modifier: Modifier = Modifier) {
         Text("版本：$version")
         Text("AIReader 是一款基于 Kotlin 和 Jetpack Compose 开发的 Android AI 阅读助手，支持自定义阅读提示词、文章预处理、OpenAI 兼容接口及本地阅读历史。")
         HorizontalDivider()
+        Text("开源项目", style = MaterialTheme.typography.titleMedium)
+        ElevatedCard(Modifier.fillMaxWidth()) {
+            Column {
+                ListItem(headlineContent = { Text("开源地址") }, supportingContent = { Text("GitHub · AIReader") },
+                    trailingContent = { Icon(painterResource(R.drawable.ic_chevron_right), null) },
+                    modifier = Modifier.clickable { openLink("https://github.com/fate-think/AIReader") })
+                HorizontalDivider()
+                ListItem(headlineContent = { Text("开源协议") }, supportingContent = { Text("Apache License 2.0") },
+                    trailingContent = { Icon(painterResource(R.drawable.ic_chevron_right), null) },
+                    modifier = Modifier.clickable { openLink("https://github.com/fate-think/AIReader/blob/main/LICENSE") })
+            }
+        }
+        if (linkError) Text("无法打开浏览器，请检查设备上的浏览器应用。",
+            color = MaterialTheme.colorScheme.error)
+        HorizontalDivider()
         Text("数据与隐私", style = MaterialTheme.typography.titleMedium)
         Text("API 请求发送到您配置的服务地址。API Key 使用 Android Keystore 加密保存。阅读历史保存在本机，是否保存由阅读历史设置控制。文件导出与分享均由您主动发起。")
     }
 }
 
 @Composable
-fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel,
-                      onBack: () -> Unit, snackbarHostState: SnackbarHostState, modifier: Modifier) {
-    val selectedProfile = state.apiProfiles.firstOrNull { it.id == state.selectedApiProfileId }
-    val initial = state.settings
-    val editorId = selectedProfile?.id
+fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel, isNew: Boolean,
+                      onBack: () -> Unit, onSaved: () -> Unit,
+                      snackbarHostState: SnackbarHostState, modifier: Modifier) {
+    val selectedProfile = if (isNew) null else state.apiProfiles.firstOrNull { it.id == state.selectedApiProfileId }
+    val initial = if (isNew) ApiSettings() else state.settings
+    val editorId = selectedProfile?.id ?: "new"
     var savedSnapshot by remember(editorId) {
         mutableStateOf(ApiEditorSnapshot(selectedProfile?.name.orEmpty(), initial.withoutKeyStatus()))
     }
@@ -211,19 +239,33 @@ fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel,
     var sendReasoningEffort by remember(editorId) { mutableStateOf(initial.sendReasoningEffort) }
     var reasoningEffort by remember(editorId) { mutableStateOf(initial.reasoningEffort) }
     var reasoningExpanded by remember { mutableStateOf(false) }
+    var advancedExpanded by remember(editorId) { mutableStateOf(false) }
+    var modelQuery by remember(editorId) { mutableStateOf("") }
+    var models by remember(editorId) { mutableStateOf<List<String>?>(null) }
+    var modelDialog by remember(editorId) { mutableStateOf(false) }
+    var loadingModels by remember(editorId) { mutableStateOf(false) }
+    var modelError by remember(editorId) { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val modelSource = baseUrl to newApiKey
+    LaunchedEffect(modelSource, deleteApiKey, allowHttp) { models = null; modelDialog = false }
     val draft = ApiSettings(baseUrl, modelId, temperature, maxTokens, streaming,
         sendTemperature, useMaxCompletionTokens, allowHttp, initial.hasApiKey, initial.keyNeedsReentry,
         autoRetry, maxRetries, connectTimeout, readTimeout, retryHttp504,
         sendReasoningEffort, reasoningEffort)
-    val valid = profileName.isNotBlank() && selectedProfile != null &&
+    val valid = profileName.isNotBlank() && (isNew || selectedProfile != null) &&
         maxTokens.toIntOrNull()?.let { it > 0 } == true &&
         (!sendTemperature || temperature.toDoubleOrNull()?.let { it in 0.0..2.0 } == true) &&
         maxRetries.toIntOrNull()?.let { it in 0..5 } == true &&
         connectTimeout.toIntOrNull()?.let { it in 10..60 } == true &&
         readTimeout.toIntOrNull()?.let { it in 30..600 } == true
-    val changed = selectedProfile != null &&
-        savedSnapshot.hasUnsavedChanges(profileName, draft, newApiKey, deleteApiKey)
-    val requestBack = { if (changed) confirmDiscard = true else onBack() }
+    LaunchedEffect(temperature, maxTokens, sendTemperature) {
+        if (maxTokens.toIntOrNull()?.let { it > 0 } != true ||
+            sendTemperature && temperature.toDoubleOrNull()?.let { it in 0.0..2.0 } != true) {
+            advancedExpanded = true
+        }
+    }
+    val changed = savedSnapshot.hasUnsavedChanges(profileName, draft, newApiKey, deleteApiKey)
+    val requestBack = { if (!saving) { if (changed) confirmDiscard = true else onBack() } }
     BackHandler(onBack = requestBack)
     var testNotice by remember(editorId) { mutableStateOf<ApiTestNotice?>(null) }
     var testNoticeId by remember(editorId) { mutableIntStateOf(0) }
@@ -233,8 +275,48 @@ fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel,
             snackbarHostState.showSnackbar(notice.message, duration = SnackbarDuration.Indefinite)
         }
     }
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        TextButton(onClick = requestBack) { Text("← 返回配置列表") }
+    Scaffold(modifier = modifier, contentWindowInsets = WindowInsets(0, 0, 0, 0), bottomBar = {
+        Surface(shadowElevation = 6.dp) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+                if (!valid) Text("请检查配置名称及参数范围。", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(onClick = { model.testConnection(draft, newApiKey, deleteApiKey,
+                        selectedProfile?.id) { message, success ->
+                        testNotice = ApiTestNotice(++testNoticeId, message, success)
+                    } }, enabled = valid && !saving && !state.testingConnection,
+                        modifier = Modifier.weight(1f).heightIn(min = 52.dp)) {
+                        Text(if (state.testingConnection) "测试中…" else "测试连接")
+                    }
+                    Button(onClick = {
+                        val submittedName = profileName
+                        val submittedDraft = draft
+                        val submittedKey = newApiKey
+                        val submittedDelete = deleteApiKey
+                        saving = true
+                        model.saveSettings(selectedProfile?.id, submittedName, submittedDraft,
+                            submittedKey, submittedDelete) { success ->
+                            saving = false
+                            if (success) {
+                                savedSnapshot = ApiEditorSnapshot(submittedName, submittedDraft.withoutKeyStatus())
+                                if (newApiKey == submittedKey) newApiKey = ""
+                                if (deleteApiKey == submittedDelete) deleteApiKey = false
+                                if (isNew) onSaved()
+                            }
+                        }
+                    }, enabled = valid && !saving && !state.testingConnection,
+                        modifier = Modifier.weight(1f).heightIn(min = 52.dp)) {
+                        Text(if (saving) "保存中…" else "保存配置")
+                    }
+                }
+            }
+        }
+    }) { innerPadding ->
+    Column(Modifier.fillMaxSize().padding(innerPadding).verticalScroll(rememberScrollState())
+        .padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        TextButton(onClick = requestBack, enabled = !saving) { Text("← 返回配置列表") }
+        ElevatedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("基本连接", style = MaterialTheme.typography.titleLarge)
         OutlinedTextField(profileName, { profileName = it }, label = { Text("配置名称") },
             isError = profileName.isBlank(), modifier = Modifier.fillMaxWidth())
@@ -256,7 +338,7 @@ fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel,
             else -> "API Key：未配置。"
         })
         OutlinedTextField(newApiKey, { newApiKey = it; if (it.isNotEmpty()) deleteApiKey = false },
-            label = { Text("新 API Key（留空保留原值）") },
+            label = { Text(if (isNew) "API Key（可选）" else "新 API Key（留空保留原值）") },
             visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth())
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -267,9 +349,34 @@ fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel,
                 }
             }
         }
-        HorizontalDivider()
-        Text("模型参数", style = MaterialTheme.typography.titleLarge)
+        } }
+        ElevatedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("模型配置", style = MaterialTheme.typography.titleLarge)
         OutlinedTextField(modelId, { modelId = it }, label = { Text("Model ID") }, modifier = Modifier.fillMaxWidth())
+        OutlinedButton(onClick = {
+            if (baseUrl.isBlank()) { modelError = "请先填写 API Base URL。"; return@OutlinedButton }
+            val requestedSource = Triple(baseUrl, newApiKey, deleteApiKey)
+            val requestedHttp = allowHttp
+            loadingModels = true
+            modelError = null
+            scope.launch {
+                try {
+                    val loaded = model.listModels(draft, newApiKey, deleteApiKey, selectedProfile?.id)
+                    if (requestedSource == Triple(baseUrl, newApiKey, deleteApiKey) && requestedHttp == allowHttp) {
+                        models = loaded; modelQuery = ""; modelDialog = true
+                    }
+                } catch (error: Exception) {
+                    if (requestedSource == Triple(baseUrl, newApiKey, deleteApiKey) && requestedHttp == allowHttp)
+                        modelError = ApiErrorMapper.message(error)
+                } finally { loadingModels = false }
+            }
+        }, enabled = !loadingModels) { Text(if (loadingModels) "正在获取模型…" else "获取在线模型列表") }
+        modelError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        TextButton(onClick = { advancedExpanded = !advancedExpanded }) {
+            Text(if (advancedExpanded) "高级模型参数  ⌃" else "高级模型参数  ⌄")
+        }
+        if (advancedExpanded) {
         OutlinedTextField(temperature, { temperature = it }, label = { Text("Temperature") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(maxTokens, { maxTokens = it }, label = { Text("Max Output Tokens") }, modifier = Modifier.fillMaxWidth())
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -284,7 +391,10 @@ fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel,
             Text("流式输出")
             Switch(checked = streaming, onCheckedChange = { streaming = it })
         }
-        HorizontalDivider()
+        }
+        } }
+        ElevatedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("思考深度", style = MaterialTheme.typography.titleMedium)
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("发送思考深度参数")
@@ -307,7 +417,9 @@ fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel,
                 }
             }
         }
-        HorizontalDivider()
+        } }
+        ElevatedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("网络稳定性", style = MaterialTheme.typography.titleMedium)
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("自动重试")
@@ -333,30 +445,25 @@ fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             isError = readTimeout.toIntOrNull()?.let { it in 30..600 } != true,
             modifier = Modifier.fillMaxWidth())
-        Button(onClick = { selectedProfile?.let {
-            val submittedName = profileName
-            val submittedDraft = draft
-            val submittedKey = newApiKey
-            val submittedDelete = deleteApiKey
-            saving = true
-            model.saveSettings(it.id, submittedName, submittedDraft, submittedKey, submittedDelete) { success ->
-                saving = false
-                if (success) {
-                    savedSnapshot = ApiEditorSnapshot(submittedName, submittedDraft.withoutKeyStatus())
-                    if (newApiKey == submittedKey) newApiKey = ""
-                    if (deleteApiKey == submittedDelete) deleteApiKey = false
-                }
-            }
-        } }, enabled = valid && !saving,
-            modifier = Modifier.fillMaxWidth()) { Text("保存配置") }
-        OutlinedButton(onClick = { model.testConnection(draft, newApiKey, deleteApiKey) { message, success ->
-            testNotice = ApiTestNotice(++testNoticeId, message, success)
-        } },
-            enabled = valid && !state.testingConnection, modifier = Modifier.fillMaxWidth()) {
-            Text(if (state.testingConnection) "正在测试连接…" else "测试连接")
-        }
+        } }
         state.settingsMessage?.let { Text(it) }
     }
+    }
+    if (modelDialog) AlertDialog(onDismissRequest = { modelDialog = false },
+        title = { Text("选择模型") },
+        text = { Column {
+            OutlinedTextField(modelQuery, { modelQuery = it }, label = { Text("搜索 Model ID") },
+                modifier = Modifier.fillMaxWidth())
+            val visible = models.orEmpty().filter { it.contains(modelQuery.trim(), ignoreCase = true) }
+            if (visible.isEmpty()) Text("没有可选模型。", modifier = Modifier.padding(12.dp))
+            else LazyColumn(Modifier.fillMaxWidth().heightIn(max = 400.dp)) {
+                items(visible) { id ->
+                    ListItem(headlineContent = { Text(id) },
+                        trailingContent = { if (id == modelId) Text("当前") },
+                        modifier = Modifier.clickable { modelId = id; modelDialog = false })
+                }
+            }
+        } }, confirmButton = { TextButton(onClick = { modelDialog = false }) { Text("取消") } })
     if (confirmDiscard) ConfirmModeActionDialog("放弃未保存的 API 修改？",
         "当前编辑内容尚未保存。",
         onConfirm = { confirmDiscard = false; onBack() },

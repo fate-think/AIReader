@@ -22,8 +22,12 @@ object SseParser {
             val choice = try { choices.getJSONObject(0) }
             catch (_: JSONException) { throw ApiException("流式响应格式无效。") }
             val result = mutableListOf<ReadingEvent>()
-            val content = choice.optJSONObject("delta")?.optString("content", "") ?: ""
-            if (content.isNotEmpty() && content != "null") result += ReadingEvent.Text(content)
+            val delta = choice.optJSONObject("delta")
+            val thinking = delta?.takeIf { !it.isNull("reasoning_content") }
+                ?.optString("reasoning_content").orEmpty()
+            if (thinking.isNotEmpty()) result += ReadingEvent.Thinking(thinking)
+            val content = delta?.takeIf { !it.isNull("content") }?.optString("content").orEmpty()
+            if (content.isNotEmpty()) result += ReadingEvent.Text(content)
             if (!choice.isNull("finish_reason") && choice.optString("finish_reason").isNotEmpty()) {
                 result += ReadingEvent.Finished
             }

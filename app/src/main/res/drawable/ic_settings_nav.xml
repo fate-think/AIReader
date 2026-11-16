@@ -3,16 +3,44 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+
+    <!-- 齿轮主体：圆形外轮廓 -->
     <path
         android:fillColor="@android:color/transparent"
         android:strokeColor="?android:attr/textColorPrimary"
         android:strokeWidth="1.8"
-        android:strokeLineCap="round"
+        android:strokeLineCap="butt"
         android:strokeLineJoin="round"
-        android:pathData="M10.58,3.2 L13.42,3.2 Q13.87,3.2 14.1,3.58 L14.82,4.76 Q15.05,5.15 15.44,5.37 L16.02,5.71 Q16.41,5.93 16.86,5.94 L18.24,5.97 Q18.69,5.98 18.91,6.37 L20.33,8.83 Q20.56,9.22 20.34,9.61 L19.68,10.82 Q19.46,11.22 19.46,11.67 L19.46,12.33 Q19.46,12.78 19.68,13.18 L20.34,14.39 Q20.56,14.78 20.33,15.17 L18.91,17.63 Q18.69,18.02 18.24,18.03 L16.86,18.06 Q16.41,18.07 16.02,18.29 L15.44,18.63 Q15.05,18.85 14.82,19.24 L14.1,20.42 Q13.87,20.8 13.42,20.8 L10.58,20.8 Q10.13,20.8 9.9,20.42 L9.18,19.24 Q8.95,18.85 8.56,18.63 L7.98,18.29 Q7.59,18.07 7.14,18.06 L5.76,18.03 Q5.31,18.02 5.09,17.63 L3.67,15.17 Q3.44,14.78 3.66,14.39 L4.32,13.18 Q4.54,12.78 4.54,12.33 L4.54,11.67 Q4.54,11.22 4.32,10.82 L3.66,9.61 Q3.44,9.22 3.67,8.83 L5.09,6.37 Q5.31,5.98 5.76,5.97 L7.14,5.94 Q7.59,5.93 7.98,5.71 L8.56,5.37 Q8.95,5.15 9.18,4.76 L9.9,3.58 Q10.13,3.2 10.58,3.2 Z" />
+        android:pathData="
+            M19,12
+            A7,7 0,1 1,5 12
+            A7,7 0,1 1,19 12
+            Z" />
+
+    <!-- 八个短齿 -->
     <path
         android:fillColor="@android:color/transparent"
         android:strokeColor="?android:attr/textColorPrimary"
         android:strokeWidth="1.8"
-        android:pathData="M15.1,12 A3.1,3.1 0,1 1,8.9 12 A3.1,3.1 0,1 1,15.1 12" />
+        android:strokeLineCap="butt"
+        android:strokeLineJoin="round"
+        android:pathData="
+            M12,2.5 L12,5
+            M18.72,5.28 L16.95,7.05
+            M21.5,12 L19,12
+            M18.72,18.72 L16.95,16.95
+            M12,21.5 L12,19
+            M5.28,18.72 L7.05,16.95
+            M2.5,12 L5,12
+            M5.28,5.28 L7.05,7.05" />
+
+    <!-- 中心实心圆点 -->
+    <path
+        android:fillColor="?android:attr/textColorPrimary"
+        android:pathData="
+            M13.6,12
+            A1.6,1.6 0,1 1,10.4 12
+            A1.6,1.6 0,1 1,13.6 12
+            Z" />
+
 </vector>

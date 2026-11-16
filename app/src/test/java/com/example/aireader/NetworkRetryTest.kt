@@ -141,7 +141,7 @@ class NetworkRetryTest {
         assertTrue(runCatching { client.complete(config(enabled504, streaming = true), "key", "正文").collect {
             events += it
         } }.isFailure)
-        assertEquals(listOf(ReadingEvent.Text("部分内容")), events)
+        assertEquals(listOf(ReadingEvent.Connected, ReadingEvent.Text("部分内容")), events)
         assertEquals(1, server.requestCount)
         server.enqueue(MockResponse().setBody(sse("已生成") +
             "event: error\ndata: {\"error\":{\"code\":\"504\"}}\n\n"))

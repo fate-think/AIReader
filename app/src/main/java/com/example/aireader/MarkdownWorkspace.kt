@@ -31,6 +31,7 @@ fun ReaderState.withEditedMarkdown(text: String): ReaderState = copy(
 
 fun ReaderState.withMarkdownGenerationStarted(): ReaderState = copy(
     result = "",
+    thinking = "",
     markdownSource = MarkdownSource.AI,
     markdownViewMode = MarkdownViewMode.PREVIEW,
     status = ReadingStatus.Loading,
@@ -55,6 +56,7 @@ fun ReaderState.withGeneratedMarkdown(text: String, nextStatus: ReadingStatus): 
 
 fun ReaderState.withClearedMarkdown(): ReaderState = copy(
     result = "",
+    thinking = "",
     markdownSource = MarkdownSource.NONE,
     markdownViewMode = MarkdownViewMode.EDIT,
     status = ReadingStatus.Idle,

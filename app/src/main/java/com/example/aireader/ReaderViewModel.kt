@@ -24,7 +24,7 @@ import okhttp3.Call
 
 private val Context.dataStore by preferencesDataStore("reader_settings")
 
-enum class ReadingStatus { Idle, Loading, WaitingForRetry, Retrying, Streaming, Completed,
+enum class ReadingStatus { Idle, Loading, WaitingResponse, Thinking, WaitingForRetry, Retrying, Streaming, Completed,
     Cancelled, Interrupted, RetryExhausted, Error }
 
 data class ApiSettings(
@@ -58,6 +58,7 @@ data class ReaderState(
     val selectedApiProfileId: String? = null,
     val apiProfilesError: String? = null,
     val result: String = "",
+    val thinking: String = "",
     val markdownSource: MarkdownSource = MarkdownSource.NONE,
     val markdownViewMode: MarkdownViewMode = MarkdownViewMode.EDIT,
     val status: ReadingStatus = ReadingStatus.Idle,
@@ -114,6 +115,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     @Volatile private var testCall: Call? = null
     private val requestGeneration = RequestGeneration()
     private var accumulated = StringBuilder()
+    private var accumulatedThinking = StringBuilder()
     private var pendingExport: String? = null
     private var pendingHtmlExport: String? = null
     private var cachedHtml: HtmlCacheEntry? = null
@@ -298,6 +300,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             apiName, snapshot.historyOptions, request.userMessage)
         val generation = requestGeneration.next()
         accumulated = StringBuilder()
+        accumulatedThinking = StringBuilder()
         cachedHtml = null
         _state.value = snapshot.withMarkdownGenerationStarted()
         readingJob = viewModelScope.launch {
@@ -308,8 +311,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 }).collect { event ->
                     if (!requestGeneration.isCurrent(generation)) return@collect
                     when (event) {
+                        ReadingEvent.Connected -> _state.value = _state.value.copy(status = ReadingStatus.WaitingResponse)
+                        is ReadingEvent.Thinking -> {
+                            accumulatedThinking.append(event.value)
+                            _state.value = _state.value.copy(thinking = accumulatedThinking.toString(),
+                                status = if (accumulated.isNotEmpty()) ReadingStatus.Streaming else ReadingStatus.Thinking)
+                        }
                         is ReadingEvent.Text -> {
                             accumulated.append(event.value)
+                            if (_state.value.status != ReadingStatus.Streaming) {
+                                _state.value = _state.value.copy(status = ReadingStatus.Streaming)
+                            }
                             val now = System.nanoTime()
                             if (now - lastUpdate >= 50_000_000L) {
                                 _state.value = _state.value.withGeneratedMarkdown(
@@ -388,6 +400,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (readingJob?.isActive == true) return
         requestGeneration.invalidate()
         accumulated = StringBuilder()
+        accumulatedThinking = StringBuilder()
         cachedHtml = null
         _state.value = _state.value.withClearedMarkdown()
     }
@@ -501,12 +514,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         _state.value = _state.value.copy(resultActionMessage = message)
     }
 
-    fun saveSettings(profileId: String, name: String, settings: ApiSettings,
+    fun saveSettings(profileId: String?, name: String, settings: ApiSettings,
                      newKey: String, deleteKey: Boolean, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {
                 val config = configFrom(settings)
-                apiProfilesRepository.save(profileId, name, config, newKey, deleteKey)
+                if (profileId == null) apiProfilesRepository.add(name, config, newKey)
+                else apiProfilesRepository.save(profileId, name, config, newKey, deleteKey)
                 _state.value = _state.value.copy(settingsMessage = null)
                 onResult(true)
                 apiNoticeChannel.send("API 配置已保存")
@@ -519,9 +533,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun testConnection(settings: ApiSettings, newKey: String, deleteKey: Boolean,
+                       existingProfileId: String?,
                        onResult: (String, Boolean) -> Unit) {
         if (testJob?.isActive == true) return
-        val key = if (newKey.isNotBlank()) newKey else if (deleteKey) null else selectedApiKey
+        val key = if (newKey.isNotBlank()) newKey else if (deleteKey || existingProfileId == null) null
+            else selectedApiKey
         if (key.isNullOrBlank()) {
             onResult("请先输入 API Key，再测试连接。", false)
             return
@@ -547,6 +563,18 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    suspend fun listModels(settings: ApiSettings, newKey: String, deleteKey: Boolean,
+                           existingProfileId: String?): List<String> {
+        val config = configFrom(settings)
+        val key = when {
+            newKey.isNotBlank() -> newKey
+            deleteKey || existingProfileId == null -> null
+            existingProfileId == _state.value.selectedApiProfileId -> selectedApiKey
+            else -> apiProfilesRepository.loadKey(existingProfileId).value
+        }
+        return client.listModels(config, key)
+    }
+
     fun selectApiProfile(id: String, notifySuccess: Boolean = false) = viewModelScope.launch {
         try {
             apiProfilesRepository.select(id)
@@ -555,16 +583,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { _state.value = _state.value.copy(settingsMessage = "无法切换 API 配置。") }
-    }
-
-    fun addApiProfile() = viewModelScope.launch {
-        try {
-            apiProfilesRepository.add("新 API 配置")
-            _state.value = _state.value.copy(settingsMessage = null)
-            apiNoticeChannel.send("API 配置已添加")
-        }
-        catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { _state.value = _state.value.copy(settingsMessage = "无法新增 API 配置。") }
     }
 
     fun copyApiProfile(id: String, name: String) = viewModelScope.launch {

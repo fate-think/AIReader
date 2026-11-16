@@ -57,6 +57,55 @@ class OpenAiCompatibleClientTest {
         assertEquals("/v1/chat/completions", path)
     }
 
+    @Test fun modelsEndpointUsesBasePathOrCompleteChatUrl() {
+        assertEquals("/proxy/custom/v1/models", client.modelsEndpoint(config().baseUrl).encodedPath)
+        assertEquals("/proxy/v1/models", client.modelsEndpoint(
+            server.url("/proxy/v1/chat/completions").toString()).encodedPath)
+    }
+
+    @Test fun modelListUsesCurrentKeyAndFiltersInvalidOrRepeatedIds() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"data":[{"id":"model-a"},{"id":"model-a"},
+            {"id":"  "},{"id":"model-b"},{}]}"""))
+        assertEquals(listOf("model-a", "model-b"), client.listModels(config(), key))
+        val request = server.takeRequest()
+        assertEquals("/proxy/custom/v1/models", request.path)
+        assertEquals("Bearer $key", request.getHeader("Authorization"))
+    }
+
+    @Test fun modelListCanOmitKeyAndReportsUnsupportedEndpoint() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(404))
+        val error = runCatching { client.listModels(config(), null) }.exceptionOrNull()
+        assertTrue(ApiErrorMapper.message(error!!).contains("不支持模型列表"))
+        assertNull(server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test fun modelListHandlesEmptyInvalidAndDeniedResponses() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"data":[]}"""))
+        assertTrue(client.listModels(config(), key).isEmpty())
+        server.enqueue(MockResponse().setBody("not-json"))
+        assertTrue(ApiErrorMapper.message(runCatching { client.listModels(config(), key) }
+            .exceptionOrNull()!!).contains("无法解析模型列表"))
+        for (code in listOf(401, 403)) {
+            server.enqueue(MockResponse().setResponseCode(code).setBody("private response"))
+            val error = runCatching { client.listModels(config(), key) }.exceptionOrNull()!!
+            assertFalse(ApiErrorMapper.message(error).contains("private response"))
+        }
+    }
+
+    @Test fun thinkingAndBodyAreSeparateAndEmptyDeltasDoNotAdvance() = runBlocking {
+        val body = """data: {"choices":[{"delta":{"role":"assistant","reasoning_content":"需要","content":null}}]}""" + "\n\n" +
+            """data: {"choices":[{"delta":{"reasoning_content":"分析","content":"正文"}}]}""" + "\n\n" +
+            """data: {"choices":[{"delta":{"reasoning_content":null,"content":"内容"}}]}""" + "\n\n" +
+            """data: {"choices":[{"delta":{"reasoning_content":"","content":""}}]}""" + "\n\n" +
+            "data: [DONE]\n\n"
+        server.enqueue(MockResponse().setChunkedBody(body, 1))
+        val events = client.complete(config(streaming = true), key, "文章").toList()
+        assertEquals(ReadingEvent.Connected, events.first())
+        assertEquals("需要分析", events.filterIsInstance<ReadingEvent.Thinking>().joinToString("") { it.value })
+        assertEquals("正文内容", events.filterIsInstance<ReadingEvent.Text>().joinToString("") { it.value })
+        assertEquals(ReadingEvent.Finished, events.last())
+    }
+
     @Test fun onlyOneUserMessageContainsCompletePromptAndProcessedArticle() {
         val processed = ArticlePreprocessor.process("甲。\n乙。", PreprocessOptions())
         val message = buildUserMessage("完整提示词\n", processed)
