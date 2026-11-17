@@ -13,6 +13,20 @@ import org.junit.Test
 import java.io.File
 
 class PreprocessSettingsStoreTest {
+    @Test fun unsetParagraphCountDefaultsToOne() = runBlocking {
+        val file = File.createTempFile("aireader-default-options-", ".preferences_pb")
+        file.delete()
+        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        try {
+            val store = PreprocessSettingsStore(PreferenceDataStoreFactory.create(
+                scope = scope, produceFile = { file }))
+            assertEquals(1, store.options.first().paraOnce)
+        } finally {
+            scope.coroutineContext[Job]!!.cancelAndJoin()
+            file.delete()
+        }
+    }
+
     @Test fun optionsSurviveReopeningDataStore() = runBlocking {
         val file = File.createTempFile("aireader-options-", ".preferences_pb")
         file.delete()

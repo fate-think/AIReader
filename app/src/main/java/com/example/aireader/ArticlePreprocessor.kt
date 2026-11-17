@@ -2,7 +2,7 @@ package com.example.aireader
 
 data class PreprocessOptions(
     val enabled: Boolean = true,
-    val paraOnce: Int = 3,
+    val paraOnce: Int = 1,
     val detectTitles: Boolean = true,
     val detectNumberedLists: Boolean = true
 ) {

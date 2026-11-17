@@ -23,8 +23,13 @@ import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 
-private fun historyTime(timestamp: Long): String = DateFormat.getDateTimeInstance(
-    DateFormat.MEDIUM, DateFormat.SHORT).format(Date(timestamp))
+@Composable
+private fun historyTime(timestamp: Long): String {
+    val locale = LocalContext.current.resources.configuration.locales[0]
+    return remember(timestamp, locale) {
+        DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT, locale).format(Date(timestamp))
+    }
+}
 
 @Composable
 fun ReadingHistoryListScreen(state: ReadingHistoryState, model: ReadingHistoryViewModel,
@@ -35,19 +40,19 @@ fun ReadingHistoryListScreen(state: ReadingHistoryState, model: ReadingHistoryVi
     val currentIds = state.summaries.mapTo(HashSet<String>()) { it.id }
     val visibleSelected = selected.intersect(currentIds)
     Column(modifier) {
-        OutlinedTextField(state.query, model::search, label = { Text("搜索标题或阅读模式") },
+        OutlinedTextField(state.query, model::search, label = { UiText("搜索标题或阅读模式") },
             singleLine = true, modifier = Modifier.fillMaxWidth())
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = { confirmBatch = true }, enabled = visibleSelected.isNotEmpty()) {
-                Text("删除选中（${visibleSelected.size}）")
+                UiText("删除选中（${visibleSelected.size}）")
             }
             TextButton(onClick = { confirmClearAll = true }, enabled = state.totalCount > 0) {
-                Text("清空全部历史")
+                UiText("清空全部历史")
             }
         }
-        state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        state.message?.let { UiText(it, color = MaterialTheme.colorScheme.error) }
         if (state.summaries.isEmpty()) {
-            Text(if (state.query.isBlank()) "还没有阅读历史。成功生成报告后会自动保存在本机。"
+            UiText(if (state.query.isBlank()) "还没有阅读历史。成功生成报告后会自动保存在本机。"
                 else "没有找到匹配的阅读历史。", modifier = Modifier.padding(16.dp))
         } else {
             LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -58,13 +63,13 @@ fun ReadingHistoryListScreen(state: ReadingHistoryState, model: ReadingHistoryVi
                             Checkbox(checked = row.id in visibleSelected,
                                 onCheckedChange = { checked -> selected = if (checked) selected + row.id else selected - row.id })
                             Column(Modifier.weight(1f).clickable { onOpen(row.id) }.padding(12.dp)) {
-                                Text(row.title, style = MaterialTheme.typography.titleMedium,
+                                androidx.compose.material3.Text(row.title, style = MaterialTheme.typography.titleMedium,
                                     maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                Text(historyTime(row.createdAt), style = MaterialTheme.typography.bodySmall)
-                                Text("${row.readingModeName} · ${row.modelId}",
+                                UiText(historyTime(row.createdAt), style = MaterialTheme.typography.bodySmall)
+                                androidx.compose.material3.Text("${row.readingModeName} · ${row.modelId}",
                                     style = MaterialTheme.typography.bodySmall, maxLines = 1,
                                     overflow = TextOverflow.Ellipsis)
-                                Text(row.preview, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                                androidx.compose.material3.Text(row.preview, maxLines = 3, overflow = TextOverflow.Ellipsis,
                                     style = MaterialTheme.typography.bodyMedium)
                             }
                         }
@@ -74,21 +79,21 @@ fun ReadingHistoryListScreen(state: ReadingHistoryState, model: ReadingHistoryVi
         }
     }
     if (confirmBatch) AlertDialog(onDismissRequest = { confirmBatch = false },
-        title = { Text("删除选中的 ${visibleSelected.size} 条历史？") },
-        text = { Text("删除后无法恢复。不会影响提示词、API 配置和其他阅读记录。") },
+        title = { UiText("删除选中的 ${visibleSelected.size} 条历史？") },
+        text = { UiText("删除后无法恢复。不会影响提示词、API 配置和其他阅读记录。") },
         confirmButton = { TextButton(onClick = {
             model.deleteMany(visibleSelected) { success -> if (success) selected -= visibleSelected }
             confirmBatch = false
-        }) { Text("删除") } },
-        dismissButton = { TextButton(onClick = { confirmBatch = false }) { Text("取消") } })
+        }) { UiText("删除") } },
+        dismissButton = { TextButton(onClick = { confirmBatch = false }) { UiText("取消") } })
     if (confirmClearAll) AlertDialog(onDismissRequest = { confirmClearAll = false },
-        title = { Text("确定清空全部阅读历史？") },
-        text = { Text("将删除数据库中的所有阅读报告及保存的文章原文，无法恢复。") },
+        title = { UiText("确定清空全部阅读历史？") },
+        text = { UiText("将删除数据库中的所有阅读报告及保存的文章原文，无法恢复。") },
         confirmButton = { TextButton(onClick = {
             model.clearAll { success -> if (success) selected = emptySet() }
             confirmClearAll = false
-        }) { Text("清空全部") } },
-        dismissButton = { TextButton(onClick = { confirmClearAll = false }) { Text("取消") } })
+        }) { UiText("清空全部") } },
+        dismissButton = { TextButton(onClick = { confirmClearAll = false }) { UiText("取消") } })
 }
 
 @Composable
@@ -113,41 +118,46 @@ fun ReadingHistoryDetailScreen(state: ReadingHistoryState, model: ReadingHistory
     val htmlLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/html")) {
         model.completeHtmlExport(it)
     }
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        TextButton(onClick = onBack) { Text("← 返回阅读历史") }
-        if (state.loadingDetail) { CircularProgressIndicator(); return@Column }
-        if (record == null) {
-            Text(state.message ?: "找不到这条阅读历史。")
-            return@Column
-        }
-        Text(record.title, style = MaterialTheme.typography.titleLarge, maxLines = 2,
+    if (state.loadingDetail) {
+        Box(modifier) { CircularProgressIndicator() }
+        return
+    }
+    if (record == null) {
+        Box(modifier.padding(16.dp)) { UiText(state.message ?: "找不到这条阅读历史。") }
+        return
+    }
+    MarkdownResult(record.markdownResult, scrollState, streaming = false, modifier = modifier,
+        header = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        TextButton(onClick = onBack) { UiText("← 返回阅读历史") }
+        androidx.compose.material3.Text(record.title, style = MaterialTheme.typography.titleLarge, maxLines = 2,
             overflow = TextOverflow.Ellipsis)
-        Text("${historyTime(record.createdAt)} · ${record.readingModeName} · ${record.modelId}",
+        androidx.compose.material3.Text("${historyTime(record.createdAt)} · ${record.readingModeName} · ${record.modelId}",
             style = MaterialTheme.typography.bodySmall)
-        Text("API 配置：${record.apiConfigName}", style = MaterialTheme.typography.bodySmall)
+        androidx.compose.material3.Text(context.getString(R.string.ui_dyn_api_profile, record.apiConfigName),
+            style = MaterialTheme.typography.bodySmall)
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            TextButton(onClick = { rename = true }) { Text("重命名") }
-            if (record.originalArticle != null) TextButton(onClick = { showOriginal = true }) { Text("查看原文") }
-            TextButton(onClick = { confirmDelete = true }) { Text("删除") }
+            TextButton(onClick = { rename = true }) { UiText("重命名") }
+            if (record.originalArticle != null) TextButton(onClick = { showOriginal = true }) { UiText("查看原文") }
+            TextButton(onClick = { confirmDelete = true }) { UiText("删除") }
         }
-        TextButton(onClick = { showFinalMessage = true }) { Text("查看最终发送内容") }
+        TextButton(onClick = { showFinalMessage = true }) { UiText("查看最终发送内容") }
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            TextButton(onClick = { clipboard.setText(AnnotatedString(record.markdownResult)) }) { Text("复制") }
+            TextButton(onClick = { clipboard.setText(AnnotatedString(record.markdownResult)) }) { UiText("复制MD") }
             TextButton(onClick = {
                 val send = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
                     putExtra(Intent.EXTRA_TEXT, record.markdownResult)
                 }
-                try { context.startActivity(Intent.createChooser(send, "分享阅读报告")) }
+                try { context.startActivity(Intent.createChooser(send, context.uiString("分享阅读报告"))) }
                 catch (_: Exception) { model.reportFailure("无法打开分享面板。") }
-            }) { Text("分享") }
+            }) { UiText("分享MD") }
             TextButton(onClick = {
                 model.prepareMarkdownExport(record.markdownResult)
                 markdownLauncher.launch("AIReader-history.md")
-            }) { Text("保存 MD") }
+            }) { UiText("保存 MD") }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            TextButton(onClick = { onPreviewHtml(record.markdownResult) }) { Text("HTML 预览") }
+            TextButton(onClick = { onPreviewHtml(record.markdownResult) }) { UiText("HTML 预览") }
             TextButton(onClick = {
                 exportingHtml = true
                 scope.launch {
@@ -157,7 +167,7 @@ fun ReadingHistoryDetailScreen(state: ReadingHistoryState, model: ReadingHistory
                         }
                     } finally { exportingHtml = false }
                 }
-            }, enabled = !exportingHtml) { Text(if (exportingHtml) "转换中…" else "保存 HTML") }
+            }, enabled = !exportingHtml) { UiText(if (exportingHtml) "转换中…" else "保存 HTML") }
         }
         TextButton(onClick = {
             openingBrowser = true
@@ -171,13 +181,10 @@ fun ReadingHistoryDetailScreen(state: ReadingHistoryState, model: ReadingHistory
                     }
                 } finally { openingBrowser = false }
             }
-        }, enabled = !openingBrowser) { Text(if (openingBrowser) "转换中…" else "浏览器打开") }
-        state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }, enabled = !openingBrowser) { UiText(if (openingBrowser) "转换中…" else "浏览器打开") }
+        state.message?.let { UiText(it, color = MaterialTheme.colorScheme.error) }
         HorizontalDivider()
-        Box(Modifier.weight(1f)) {
-            MarkdownResult(record.markdownResult, scrollState, streaming = false)
-        }
-    }
+    } })
     if (showOriginal && record?.originalArticle != null) HistoryTextDialog(
         title = "原始文章", content = record.originalArticle, copyLabel = "复制原文",
         copiedMessage = "原文已复制", onDismiss = { showOriginal = false })
@@ -187,21 +194,21 @@ fun ReadingHistoryDetailScreen(state: ReadingHistoryState, model: ReadingHistory
         copyLabel = if (record.finalUserMessage == null) null else "复制全部内容",
         copiedMessage = "最终发送内容已复制", onDismiss = { showFinalMessage = false })
     if (rename && record != null) AlertDialog(onDismissRequest = { rename = false },
-        title = { Text("修改历史标题") },
-        text = { OutlinedTextField(titleDraft, { titleDraft = it }, label = { Text("标题") }) },
+        title = { UiText("修改历史标题") },
+        text = { OutlinedTextField(titleDraft, { titleDraft = it }, label = { UiText("标题") }) },
         confirmButton = { TextButton(onClick = {
             model.rename(record.id, titleDraft)
             rename = false
-        }, enabled = titleDraft.isNotBlank()) { Text("保存") } },
-        dismissButton = { TextButton(onClick = { rename = false }) { Text("取消") } })
+        }, enabled = titleDraft.isNotBlank()) { UiText("保存") } },
+        dismissButton = { TextButton(onClick = { rename = false }) { UiText("取消") } })
     if (confirmDelete && record != null) AlertDialog(onDismissRequest = { confirmDelete = false },
-        title = { Text("删除这条阅读历史？") },
-        text = { Text("将删除报告及保存的文章原文，无法恢复。") },
+        title = { UiText("删除这条阅读历史？") },
+        text = { UiText("将删除报告及保存的文章原文，无法恢复。") },
         confirmButton = { TextButton(onClick = {
             model.delete(record.id) { success -> if (success) onBack() }
             confirmDelete = false
-        }) { Text("删除") } },
-        dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消") } })
+        }) { UiText("删除") } },
+        dismissButton = { TextButton(onClick = { confirmDelete = false }) { UiText("取消") } })
 }
 
 @Composable
@@ -211,13 +218,13 @@ private fun HistoryTextDialog(title: String, content: String, copyLabel: String?
     val clipboard = LocalClipboardManager.current
     AlertDialog(onDismissRequest = onDismiss, title = {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(title, modifier = Modifier.weight(1f))
+            UiText(title, modifier = Modifier.weight(1f))
             if (copyLabel != null) TextButton(onClick = {
                 clipboard.setText(AnnotatedString(content))
-                Toast.makeText(context, copiedMessage, Toast.LENGTH_SHORT).show()
-            }) { Text(copyLabel) }
+                Toast.makeText(context, context.uiString(copiedMessage), Toast.LENGTH_SHORT).show()
+            }) { UiText(copyLabel) }
         }
-    }, text = { Text(content,
+    }, text = { androidx.compose.material3.Text(content,
         modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp).verticalScroll(rememberScrollState())) },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } })
+        confirmButton = { TextButton(onClick = onDismiss) { UiText("关闭") } })
 }

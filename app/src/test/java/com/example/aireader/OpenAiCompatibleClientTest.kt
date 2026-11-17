@@ -107,7 +107,7 @@ class OpenAiCompatibleClientTest {
     }
 
     @Test fun onlyOneUserMessageContainsCompletePromptAndProcessedArticle() {
-        val processed = ArticlePreprocessor.process("甲。\n乙。", PreprocessOptions())
+        val processed = ArticlePreprocessor.process("甲。\n乙。", PreprocessOptions(paraOnce = 3))
         val message = buildUserMessage("完整提示词\n", processed)
         val request = client.buildRequest(config(), key, message)
         val buffer = okio.Buffer()
@@ -130,12 +130,12 @@ class OpenAiCompatibleClientTest {
         assertFalse(json.has("max_completion_tokens"))
     }
 
-    @Test fun maxCompletionTokensCanBeSelected() {
-        val request = client.buildRequest(config().copy(useMaxCompletionTokens = true), key, "正文")
+    @Test fun maxTokensCanBeOmittedWithoutReplacement() {
+        val request = client.buildRequest(config().copy(sendMaxTokens = false), key, "正文")
         val buffer = okio.Buffer()
         request.body!!.writeTo(buffer)
         val json = JSONObject(buffer.readUtf8())
-        assertTrue(json.has("max_completion_tokens"))
+        assertFalse(json.has("max_completion_tokens"))
         assertFalse(json.has("max_tokens"))
     }
 
@@ -282,15 +282,15 @@ class OpenAiCompatibleClientTest {
         assertFalse(json.has("temperature"))
     }
 
-    @Test fun connectionTestAlsoSupportsNonStreamingAndSelectedTokenField() = runBlocking {
+    @Test fun connectionTestAlsoSupportsNonStreamingAndOmittedTokenField() = runBlocking {
         server.enqueue(MockResponse().setBody(response("OK")))
-        client.testConnection(config().copy(useMaxCompletionTokens = true,
+        client.testConnection(config().copy(sendMaxTokens = false,
             maxOutputTokens = 128), key)
         val json = JSONObject(server.takeRequest().body.readUtf8())
         assertFalse(json.getBoolean("stream"))
-        assertEquals(128, json.getInt("max_completion_tokens"))
+        assertFalse(json.has("max_completion_tokens"))
         assertFalse(json.has("max_tokens"))
-        assertEquals(0.3, json.getDouble("temperature"), 0.0)
+        assertEquals(1.0, json.getDouble("temperature"), 0.0)
     }
 
     @Test fun pastedKeyWithSurroundingWhitespaceWorksBeforeSaving() = runBlocking {

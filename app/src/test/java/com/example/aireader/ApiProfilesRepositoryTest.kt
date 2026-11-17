@@ -50,25 +50,19 @@ class ApiProfilesRepositoryTest {
 
     private fun richConfig(model: String) = ApiConfig(
         baseUrl = "https://example.com/v1", modelId = model, temperature = 0.8,
-        maxOutputTokens = 8192, streaming = false, sendTemperature = false,
-        useMaxCompletionTokens = true, allowHttp = false,
-        network = NetworkStabilitySettings(false, 4, 45, 300, true),
-        reasoning = ReasoningSettings(true, ReasoningEffort.MAX))
+        sendTemperature = false)
 
     @Test fun oldSettingsAndCiphertextMigrateExactlyOnce() = runBlocking { withRepository { repo, store ->
         val legacyConfig = richConfig("legacy-model")
         val legacyJson = JSONObject()
             .put("baseUrl", legacyConfig.baseUrl).put("modelId", legacyConfig.modelId)
-            .put("temperature", legacyConfig.temperature).put("maxOutputTokens", legacyConfig.maxOutputTokens)
-            .put("streaming", legacyConfig.streaming).put("sendTemperature", legacyConfig.sendTemperature)
-            .put("useMaxCompletionTokens", legacyConfig.useMaxCompletionTokens)
-            .put("allowHttp", legacyConfig.allowHttp).put("autoRetry", legacyConfig.network.autoRetry)
-            .put("maxRetries", legacyConfig.network.maxRetries)
-            .put("connectTimeoutSeconds", legacyConfig.network.connectTimeoutSeconds)
-            .put("readTimeoutSeconds", legacyConfig.network.readTimeoutSeconds)
-            .put("retryHttp504", legacyConfig.network.retryHttp504)
-            .put("sendReasoningEffort", legacyConfig.reasoning.sendReasoningEffort)
-            .put("reasoningEffort", legacyConfig.reasoning.reasoningEffort.apiValue).toString()
+            .put("temperature", legacyConfig.temperature).put("maxOutputTokens", 4096)
+            .put("streaming", false).put("sendTemperature", legacyConfig.sendTemperature)
+            .put("useMaxCompletionTokens", true)
+            .put("allowHttp", true).put("autoRetry", false)
+            .put("maxRetries", 4).put("connectTimeoutSeconds", 45)
+            .put("readTimeoutSeconds", 300).put("retryHttp504", true)
+            .put("sendReasoningEffort", false).put("reasoningEffort", "max").toString()
         val oldCiphertext = cipher.encrypt("legacy-key")
         store.edit {
             it[stringPreferencesKey("settings")] = legacyJson
@@ -79,6 +73,8 @@ class ApiProfilesRepositoryTest {
         assertEquals(1, first.profiles.size)
         assertEquals(first.profiles.single().id, first.selectedId)
         assertEquals(legacyConfig, first.selected.config)
+        assertEquals(8192, first.selected.config.maxOutputTokens)
+        assertFalse(first.selected.config.allowHttp)
         assertEquals("legacy-key", repo.loadKey(first.selectedId).value)
         val saved = store.data.first()
         assertEquals(legacyJson, saved[stringPreferencesKey("settings")])
@@ -87,6 +83,8 @@ class ApiProfilesRepositoryTest {
         assertEquals(oldCiphertext, JSONObject(snapshot).getJSONArray("profiles")
             .getJSONObject(0).getString("encryptedKey"))
         assertFalse(snapshot.contains("legacy-key"))
+        assertFalse(snapshot.contains("useMaxCompletionTokens"))
+        assertFalse(snapshot.contains("maxOutputTokens"))
         repo.migrateIfNeeded()
         assertEquals(snapshot, store.data.first()[stringPreferencesKey("api_profiles_v1")])
     } }
@@ -97,6 +95,31 @@ class ApiProfilesRepositoryTest {
         catch (_: org.json.JSONException) { }
         assertEquals("{broken", store.data.first()[stringPreferencesKey("api_profiles_v1")])
     } }
+
+    @Test fun oldProfileFieldsAreIgnoredWithoutLosingItsIdentityOrKey() = runBlocking {
+        withRepository { repo, store ->
+            repo.migrateIfNeeded()
+            val id = repo.add("Existing", richConfig("saved-model"), "saved-key")
+            val raw = JSONObject(store.data.first()[stringPreferencesKey("api_profiles_v1")]!!)
+            val config = raw.getJSONArray("profiles").getJSONObject(1).getJSONObject("config")
+            config.put("useMaxCompletionTokens", true).put("maxOutputTokens", 2048)
+                .put("streaming", false).put("allowHttp", true)
+                .put("sendReasoningEffort", false).put("reasoningEffort", "max")
+            store.edit { it[stringPreferencesKey("api_profiles_v1")] = raw.toString() }
+            repo.migrateIfNeeded()
+            val selected = repo.catalogs.first().selected
+            assertEquals(id, selected.id)
+            assertEquals("Existing", selected.name)
+            assertEquals("saved-model", selected.config.modelId)
+            assertEquals(0.8, selected.config.temperature, 0.0)
+            assertEquals("saved-key", repo.loadKey(id).value)
+            repo.save(id, selected.name, selected.config, null, false)
+            val rewritten = store.data.first()[stringPreferencesKey("api_profiles_v1")]!!
+            assertFalse(rewritten.contains("useMaxCompletionTokens"))
+            assertFalse(rewritten.contains("maxOutputTokens"))
+            assertEquals("saved-key", repo.loadKey(id).value)
+        }
+    }
 
     @Test fun failedLegacyMigrationLeavesOriginalFieldsUntouched() = runBlocking { withRepository { repo, store ->
         store.edit {
@@ -115,15 +138,15 @@ class ApiProfilesRepositoryTest {
         repo.migrateIfNeeded()
         val original = repo.catalogs.first().selectedId
         val a = repo.add("A", richConfig("model-A"), " key-A\r\n")
-        val bConfig = richConfig("model-B").copy(reasoning = ReasoningSettings(false, ReasoningEffort.HIGH))
+        val bConfig = richConfig("model-B").copy(temperature = 0.6, sendTemperature = true)
         val b = repo.add("B", bConfig, "key-B")
         val ids = repo.catalogs.first().profiles.map { it.id }
         assertEquals(3, ids.toSet().size)
         assertEquals("key-A", repo.loadKey(a).value)
         assertEquals("key-B", repo.loadKey(b).value)
         assertEquals(bConfig, repo.catalogs.first().selected.config)
-        assertEquals(ReasoningEffort.MAX, repo.catalogs.first().profiles.first { it.id == a }
-            .config.reasoning.reasoningEffort)
+        assertEquals(0.8, repo.catalogs.first().profiles.first { it.id == a }
+            .config.temperature, 0.0)
         repo.save(a, "Renamed A", richConfig("edited-A"), null, false)
         assertEquals("key-A", repo.loadKey(a).value)
         assertEquals("key-B", repo.loadKey(b).value)
@@ -187,28 +210,33 @@ class ApiProfilesRepositoryTest {
             server.start()
             try {
                 val base = server.url("/v1").toString()
-                val a = repo.add("A", richConfig("model-A").copy(baseUrl = base, allowHttp = true), "key-A")
-                val b = repo.add("B", richConfig("model-B").copy(baseUrl = base, allowHttp = true,
-                    reasoning = ReasoningSettings(false, ReasoningEffort.HIGH)), "key-B")
+                val a = repo.add("A", richConfig("model-A").copy(baseUrl = base,
+                    sendTemperature = true), "key-A")
+                val b = repo.add("B", richConfig("model-B").copy(baseUrl = base,
+                    temperature = 0.6, sendTemperature = true), "key-B")
                 val client = OpenAiCompatibleClient(allowHttpForTests = true)
+                val global = GlobalApiSettings().copy(reasoning = ReasoningSettings(true, ReasoningEffort.MEDIUM))
                 repo.select(a)
                 val aProfile = repo.catalogs.first().selected
-                val inFlightRequest = client.buildRequest(aProfile.config, repo.loadKey(a).value!!, "prompt\n\narticle")
+                val inFlightRequest = client.buildRequest(global.applyTo(aProfile.config),
+                    repo.loadKey(a).value!!, "prompt\n\narticle")
                 repo.select(b)
                 val bProfile = repo.catalogs.first().selected
-                val bRequest = client.buildRequest(bProfile.config, repo.loadKey(b).value!!, "other")
+                val bRequest = client.buildRequest(global.applyTo(bProfile.config), repo.loadKey(b).value!!, "other")
                 val aBody = Buffer().also { inFlightRequest.body!!.writeTo(it) }
                 val bBody = Buffer().also { bRequest.body!!.writeTo(it) }
                 assertEquals("Bearer key-A", inFlightRequest.header("Authorization"))
                 val aJson = JSONObject(aBody.readUtf8())
                 assertEquals("model-A", aJson.getString("model"))
-                assertEquals("max", aJson.getString("reasoning_effort"))
+                assertEquals("medium", aJson.getString("reasoning_effort"))
+                assertEquals(0.8, aJson.getDouble("temperature"), 0.0)
                 assertEquals("Bearer key-B", bRequest.header("Authorization"))
                 val bJson = JSONObject(bBody.readUtf8())
                 assertEquals("model-B", bJson.getString("model"))
-                assertFalse(bJson.has("reasoning_effort"))
+                assertEquals("medium", bJson.getString("reasoning_effort"))
+                assertEquals(0.6, bJson.getDouble("temperature"), 0.0)
                 server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"content":"OK"}}]}"""))
-                client.testConnection(bProfile.config, repo.loadKey(b).value!!)
+                client.testConnection(global.applyTo(bProfile.config), repo.loadKey(b).value!!)
                 val recorded = server.takeRequest()
                 assertEquals("Bearer key-B", recorded.getHeader("Authorization"))
                 assertEquals("model-B", JSONObject(recorded.body.readUtf8()).getString("model"))

@@ -67,7 +67,6 @@ class ApiProfilesRepository(private val dataStore: DataStore<Preferences>, priva
 
     suspend fun add(name: String, config: ApiConfig = ApiConfig(), newKey: String? = null): String {
         val cleanName = validName(name)
-        config.network.validate()
         val encrypted = encryptIfEntered(newKey)
         val id = UUID.randomUUID().toString()
         mutate { snapshot -> snapshot.copy(
@@ -77,7 +76,6 @@ class ApiProfilesRepository(private val dataStore: DataStore<Preferences>, priva
 
     suspend fun save(id: String, name: String, config: ApiConfig, newKey: String?, deleteKey: Boolean) {
         val cleanName = validName(name)
-        config.network.validate()
         val encrypted = encryptIfEntered(newKey)
         mutate { snapshot ->
             require(snapshot.profiles.any { it.id == id }) { "API 配置不存在。" }
@@ -159,39 +157,17 @@ class ApiProfilesRepository(private val dataStore: DataStore<Preferences>, priva
     private fun decodeLegacyConfig(json: JSONObject): ApiConfig = decodeConfig(json, strict = false)
 
     private fun decodeConfig(json: JSONObject, strict: Boolean): ApiConfig {
-        if (strict) require(listOf("baseUrl", "modelId", "temperature", "maxOutputTokens",
-                "streaming", "sendTemperature", "useMaxCompletionTokens", "allowHttp",
-                "autoRetry", "maxRetries", "connectTimeoutSeconds", "readTimeoutSeconds",
-                "retryHttp504", "sendReasoningEffort", "reasoningEffort").all { json.has(it) }) {
+        if (strict) require(listOf("baseUrl", "modelId", "temperature", "sendTemperature").all { json.has(it) }) {
             "API 配置字段不完整。"
         }
         return ApiConfig(
             baseUrl = json.optString("baseUrl"), modelId = json.optString("modelId"),
-            temperature = json.optString("temperature", "0.3").toDoubleOrNull()
-                ?.takeIf { it.isFinite() } ?: 0.3,
-            maxOutputTokens = json.optString("maxOutputTokens", "4096").toIntOrNull() ?: 4096,
-            streaming = json.optBoolean("streaming", true),
-            sendTemperature = json.optBoolean("sendTemperature", true),
-            useMaxCompletionTokens = json.optBoolean("useMaxCompletionTokens", false),
-            allowHttp = json.optBoolean("allowHttp", false),
-            network = NetworkStabilitySettings(
-                json.optBoolean("autoRetry", true), json.optInt("maxRetries", 2).coerceIn(0, 5),
-                json.optInt("connectTimeoutSeconds", 20).coerceIn(10, 60),
-                json.optInt("readTimeoutSeconds", 180).coerceIn(30, 600),
-                json.optBoolean("retryHttp504", false)),
-            reasoning = ReasoningSettings(json.optBoolean("sendReasoningEffort", false),
-                ReasoningEffort.fromApiValue(json.optString("reasoningEffort", "max"))))
+            temperature = json.optString("temperature", "1.0").toDoubleOrNull()
+                ?.takeIf { it.isFinite() } ?: 1.0,
+            sendTemperature = json.optBoolean("sendTemperature", true))
     }
 
     private fun encodeConfig(config: ApiConfig): JSONObject = JSONObject()
         .put("baseUrl", config.baseUrl).put("modelId", config.modelId)
-        .put("temperature", config.temperature).put("maxOutputTokens", config.maxOutputTokens)
-        .put("streaming", config.streaming).put("sendTemperature", config.sendTemperature)
-        .put("useMaxCompletionTokens", config.useMaxCompletionTokens).put("allowHttp", config.allowHttp)
-        .put("autoRetry", config.network.autoRetry).put("maxRetries", config.network.maxRetries)
-        .put("connectTimeoutSeconds", config.network.connectTimeoutSeconds)
-        .put("readTimeoutSeconds", config.network.readTimeoutSeconds)
-        .put("retryHttp504", config.network.retryHttp504)
-        .put("sendReasoningEffort", config.reasoning.sendReasoningEffort)
-        .put("reasoningEffort", config.reasoning.reasoningEffort.apiValue)
+        .put("temperature", config.temperature).put("sendTemperature", config.sendTemperature)
 }

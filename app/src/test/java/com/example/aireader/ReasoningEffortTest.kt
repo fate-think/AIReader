@@ -59,15 +59,15 @@ class ReasoningEffortTest {
         }
     }
 
-    @Test fun alternateTokenFieldAndMessageBuilderStayIntact() {
-        val processed = ArticlePreprocessor.process("甲。\n乙。", PreprocessOptions())
+    @Test fun omittedTokenFieldAndMessageBuilderStayIntact() {
+        val processed = ArticlePreprocessor.process("甲。\n乙。", PreprocessOptions(paraOnce = 3))
         assertEquals("{段落1} 甲。乙。", processed)
         val message = buildUserMessage("提示词\n", processed)
         assertEquals("提示词\n{段落1} 甲。乙。", message)
         val body = json(config(ReasoningSettings(true, ReasoningEffort.NONE))
-            .copy(useMaxCompletionTokens = true, sendTemperature = false), message)
+            .copy(sendMaxTokens = false, sendTemperature = false), message)
         assertEquals("none", body.getString("reasoning_effort"))
-        assertEquals(8192, body.getInt("max_completion_tokens"))
+        assertFalse(body.has("max_completion_tokens"))
         assertFalse(body.has("max_tokens"))
         assertFalse(body.has("temperature"))
         assertEquals(message, body.getJSONArray("messages").getJSONObject(0).getString("content"))

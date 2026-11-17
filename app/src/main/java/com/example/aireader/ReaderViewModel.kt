@@ -30,21 +30,10 @@ enum class ReadingStatus { Idle, Loading, WaitingResponse, Thinking, WaitingForR
 data class ApiSettings(
     val baseUrl: String = "",
     val modelId: String = "",
-    val temperature: String = "0.3",
-    val maxOutputTokens: String = "4096",
-    val streaming: Boolean = true,
+    val temperature: String = "1.0",
     val sendTemperature: Boolean = true,
-    val useMaxCompletionTokens: Boolean = false,
-    val allowHttp: Boolean = false,
     val hasApiKey: Boolean = false,
-    val keyNeedsReentry: Boolean = false,
-    val autoRetry: Boolean = true,
-    val maxRetries: String = "2",
-    val connectTimeoutSeconds: String = "20",
-    val readTimeoutSeconds: String = "180",
-    val retryHttp504: Boolean = false,
-    val sendReasoningEffort: Boolean = false,
-    val reasoningEffort: ReasoningEffort = ReasoningEffort.MAX
+    val keyNeedsReentry: Boolean = false
 )
 
 data class ReaderState(
@@ -54,6 +43,9 @@ data class ReaderState(
     val preprocessOptions: PreprocessOptions = PreprocessOptions(),
     val historyOptions: HistorySaveOptions = HistorySaveOptions(),
     val settings: ApiSettings = ApiSettings(),
+    val globalApiSettings: GlobalApiSettings = GlobalApiSettings(),
+    val globalApiSettingsReady: Boolean = false,
+    val globalApiSettingsMessage: String? = null,
     val apiProfiles: List<ApiProfile> = emptyList(),
     val selectedApiProfileId: String? = null,
     val apiProfilesError: String? = null,
@@ -69,6 +61,7 @@ data class ReaderState(
     val historySaveMessage: String? = null,
     val htmlFontSizePx: Int = 24,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val languageMode: LanguageMode? = null,
     val themeMessage: String? = null,
     val testingConnection: Boolean = false,
     val storageError: String? = null,
@@ -94,9 +87,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val preprocessSettings = PreprocessSettingsStore(context.dataStore)
     private val htmlSettings = HtmlSettingsStore(context.dataStore)
     private val themeSettings = ThemeSettingsStore(context.dataStore)
+    private val globalApiSettingsStore = GlobalApiSettingsStore(context.dataStore)
+    private val languageSettings = LanguageSettingsStore(context.dataStore)
     private val historySettings = HistorySettingsStore(context.dataStore)
     private val historyRepository by lazy { ReadingHistoryRepository(ReadingHistoryDatabase.get(context).historyDao()) }
     private val themeSaveMutex = Mutex()
+    private val languageSaveMutex = Mutex()
     private val historySaveMutex = Mutex()
     private val htmlConverter = MarkdownHtmlConverter()
     private val promptRepository = PromptRepository(context.dataStore) { file ->
@@ -139,12 +135,23 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 _state.value = _state.value.copy(apiProfilesError = "API 配置迁移或读取失败，原数据未被覆盖。")
             }
             val options = preprocessSettings.options.first()
+            val globalApiSettings = try {
+                globalApiSettingsStore.initializeIfNeeded()
+                globalApiSettingsStore.settings.first()
+            } catch (error: Exception) {
+                _state.value = _state.value.copy(globalApiSettingsMessage =
+                    "全局 API 参数读取失败，原数据未被覆盖。")
+                throw error
+            }
             val htmlFontSize = htmlSettings.fontSizePx.first()
             val themeMode = themeSettings.mode.first()
+            val languageMode = languageSettings.language.first()
             val historyOptions = historySettings.options.first()
             promptRepository.migrateIfNeeded()
             _state.value = _state.value.copy(preprocessOptions = options,
-                htmlFontSizePx = htmlFontSize, themeMode = themeMode, historyOptions = historyOptions)
+                globalApiSettings = globalApiSettings, globalApiSettingsReady = true,
+                htmlFontSizePx = htmlFontSize, themeMode = themeMode, languageMode = languageMode,
+                historyOptions = historyOptions)
             promptRepository.catalogs.collect { catalog ->
                 _state.value = _state.value.copy(
                     modes = catalog.modes, selectedModeId = catalog.selectedModeId, loaded = true
@@ -173,46 +180,35 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         baseUrl = config.baseUrl,
         modelId = config.modelId,
         temperature = config.temperature.toString(),
-        maxOutputTokens = config.maxOutputTokens.toString(),
-        streaming = config.streaming,
         sendTemperature = config.sendTemperature,
-        useMaxCompletionTokens = config.useMaxCompletionTokens,
-        allowHttp = config.allowHttp,
         hasApiKey = hasKey,
-        keyNeedsReentry = keyNeedsReentry,
-        autoRetry = config.network.autoRetry,
-        maxRetries = config.network.maxRetries.toString(),
-        connectTimeoutSeconds = config.network.connectTimeoutSeconds.toString(),
-        readTimeoutSeconds = config.network.readTimeoutSeconds.toString(),
-        retryHttp504 = config.network.retryHttp504,
-        sendReasoningEffort = config.reasoning.sendReasoningEffort,
-        reasoningEffort = config.reasoning.reasoningEffort
+        keyNeedsReentry = keyNeedsReentry
     )
 
     private fun configFrom(settings: ApiSettings): ApiConfig {
         val parsedTemperature = settings.temperature.toDoubleOrNull()?.takeIf { it.isFinite() }
         val temperature = parsedTemperature
-            ?: if (settings.sendTemperature) throw ApiException("Temperature 必须是有效数字。") else 0.3
-        val maxTokens = settings.maxOutputTokens.toIntOrNull()
-            ?: throw ApiException("Max Output Tokens 必须是整数。")
+            ?: if (settings.sendTemperature) throw ApiException("Temperature 必须是有效数字。") else 1.0
         if (settings.sendTemperature && temperature !in 0.0..2.0) {
             throw ApiException("Temperature 应在 0 到 2 之间。")
         }
-        if (maxTokens <= 0) throw ApiException("Max Output Tokens 必须大于 0。")
-        val retries = settings.maxRetries.toIntOrNull()?.takeIf { it in 0..5 }
-            ?: throw ApiException("最大重试次数须为 0–5。")
-        val connect = settings.connectTimeoutSeconds.toIntOrNull()?.takeIf { it in 10..60 }
-            ?: throw ApiException("连接超时须为 10–60 秒。")
-        val read = settings.readTimeoutSeconds.toIntOrNull()?.takeIf { it in 30..600 }
-            ?: throw ApiException("读取超时须为 30–600 秒。")
-        return ApiConfig(settings.baseUrl.trim(), settings.modelId.trim(), temperature, maxTokens,
-            settings.streaming, settings.sendTemperature, settings.useMaxCompletionTokens,
-            settings.allowHttp, NetworkStabilitySettings(settings.autoRetry, retries, connect, read,
-                settings.retryHttp504), ReasoningSettings(settings.sendReasoningEffort,
-                settings.reasoningEffort))
+        return ApiConfig(baseUrl = settings.baseUrl.trim(), modelId = settings.modelId.trim(),
+            temperature = temperature, sendTemperature = settings.sendTemperature)
     }
 
     fun clearStorageError() { _state.value = _state.value.copy(storageError = null) }
+    fun setLanguageMode(mode: LanguageMode) {
+        val previous = _state.value.languageMode
+        _state.value = _state.value.copy(languageMode = mode, settingsMessage = null)
+        viewModelScope.launch {
+            try { languageSaveMutex.withLock {
+                if (_state.value.languageMode == mode) languageSettings.save(mode)
+            } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { if (_state.value.languageMode == mode) _state.value = _state.value.copy(
+                languageMode = previous, settingsMessage = "语言设置保存失败，请重试。") }
+        }
+    }
     fun setThemeMode(mode: ThemeMode) {
         _state.value = _state.value.copy(themeMode = mode, themeMessage = null)
         viewModelScope.launch {
@@ -283,13 +279,14 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun startReading(confirmedOverwrite: Boolean = false) {
         if (readingJob?.isActive == true) return
         val snapshot = _state.value
+        if (!snapshot.globalApiSettingsReady) { readingError("全局 API 参数尚未载入。"); return }
         if (!confirmedOverwrite && MarkdownWorkspace.requiresOverwriteConfirmation(
                 snapshot.result, snapshot.markdownSource)) return
         if (snapshot.article.isBlank()) { readingError("请先输入文章。"); return }
         val request = finalRequestPreview(snapshot) ?: run { readingError("请选择有效的阅读模式。"); return }
         val key = selectedApiKey?.takeIf { it.isNotBlank() }
             ?: run { readingError("请先为当前 API 配置填写 API Key。"); return }
-        val config = try { configFrom(snapshot.settings) }
+        val config = try { snapshot.globalApiSettings.applyTo(configFrom(snapshot.settings)) }
         catch (error: Exception) { readingError(ApiErrorMapper.message(error)); return }
         try { client.validate(config, key) }
         catch (error: Exception) { readingError(ApiErrorMapper.message(error)); return }
@@ -532,6 +529,22 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun saveGlobalApiSettings(settings: GlobalApiSettings, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                globalApiSettingsStore.save(settings)
+                _state.value = _state.value.copy(globalApiSettings = settings,
+                    globalApiSettingsMessage = null)
+                onResult(true)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                _state.value = _state.value.copy(globalApiSettingsMessage =
+                    "全局 API 参数保存失败，请检查参数或存储数据。")
+                onResult(false)
+            }
+        }
+    }
+
     fun testConnection(settings: ApiSettings, newKey: String, deleteKey: Boolean,
                        existingProfileId: String?,
                        onResult: (String, Boolean) -> Unit) {
@@ -542,7 +555,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             onResult("请先输入 API Key，再测试连接。", false)
             return
         }
-        val config = try { configFrom(settings) }
+        val config = try { _state.value.globalApiSettings.applyTo(configFrom(settings)) }
         catch (error: Exception) {
             onResult(ApiErrorMapper.message(error), false)
             return
@@ -565,7 +578,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     suspend fun listModels(settings: ApiSettings, newKey: String, deleteKey: Boolean,
                            existingProfileId: String?): List<String> {
-        val config = configFrom(settings)
+        val config = _state.value.globalApiSettings.applyTo(configFrom(settings))
         val key = when {
             newKey.isNotBlank() -> newKey
             deleteKey || existingProfileId == null -> null

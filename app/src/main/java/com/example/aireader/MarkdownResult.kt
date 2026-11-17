@@ -93,18 +93,23 @@ object MarkdownDocument {
 }
 
 @Composable
-fun MarkdownResult(content: String, listState: LazyListState, streaming: Boolean) {
+fun MarkdownResult(content: String, listState: LazyListState, streaming: Boolean,
+                   modifier: Modifier = Modifier, header: (@Composable () -> Unit)? = null) {
     if (streaming) {
         val chunks = remember(content) { MarkdownDocument.streamingChunks(content) }
-        LazyColumn(modifier = Modifier.fillMaxSize(), state = listState) {
+        LazyColumn(modifier = modifier.fillMaxSize(), state = listState,
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)) {
+            if (header != null) item { header() }
             items(chunks) { Text(it, style = MaterialTheme.typography.bodyMedium) }
         }
     } else {
         val blocks = remember(content) {
             try { MarkdownDocument.blocks(content) } catch (_: Exception) { null }
         }
-        LazyColumn(modifier = Modifier.fillMaxSize(), state = listState,
+        LazyColumn(modifier = modifier.fillMaxSize(), state = listState,
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (header != null) item { header() }
             if (blocks == null) item { Text(content) }
             else items(blocks) { MarkdownBlock(it) }
         }

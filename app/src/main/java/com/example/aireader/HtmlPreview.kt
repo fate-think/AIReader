@@ -31,11 +31,11 @@ fun HtmlPreview(html: String, fontSizePx: Int, onFontSizeChange: (Int) -> Unit, 
         .statusBarsPadding().navigationBarsPadding()) {
         Surface(Modifier.fillMaxWidth()) {
             Row(Modifier.fillMaxWidth().padding(4.dp)) {
-                TextButton(onClick = onClose) { Text("返回") }
+                TextButton(onClick = onClose) { UiText("返回") }
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = { onFontSizeChange(fontSizePx - 1) }, enabled = fontSizePx > 14) { Text("A−") }
-                Text("${fontSizePx}px", modifier = Modifier.padding(top = 12.dp))
-                TextButton(onClick = { onFontSizeChange(fontSizePx + 1) }, enabled = fontSizePx < 36) { Text("A+") }
+                TextButton(onClick = { onFontSizeChange(fontSizePx - 1) }, enabled = fontSizePx > 14) { UiText("A−") }
+                UiText("${fontSizePx}px", modifier = Modifier.padding(top = 12.dp))
+                TextButton(onClick = { onFontSizeChange(fontSizePx + 1) }, enabled = fontSizePx < 36) { UiText("A+") }
             }
         }
         key(html) { AndroidView(factory = { viewContext ->

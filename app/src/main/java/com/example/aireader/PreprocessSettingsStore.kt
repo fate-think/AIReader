@@ -17,7 +17,7 @@ class PreprocessSettingsStore(private val dataStore: DataStore<Preferences>) {
     val options: Flow<PreprocessOptions> = dataStore.data.map { preferences ->
         PreprocessOptions(
             enabled = preferences[enabledKey] ?: true,
-            paraOnce = (preferences[paraOnceKey] ?: 3).coerceIn(1, 100),
+            paraOnce = (preferences[paraOnceKey] ?: 1).coerceIn(1, 100),
             detectTitles = preferences[titlesKey] ?: true,
             detectNumberedLists = preferences[listsKey] ?: true
         )

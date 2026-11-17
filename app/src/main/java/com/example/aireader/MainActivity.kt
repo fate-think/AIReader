@@ -2,6 +2,7 @@ package com.example.aireader
 
 import android.content.Intent
 import android.os.Bundle
+import android.content.res.Configuration
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -23,9 +24,17 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
@@ -50,6 +59,14 @@ class MainActivity : ComponentActivity() {
         setContent {
             val model: ReaderViewModel = viewModel()
             val state by model.state.collectAsStateWithLifecycle()
+            val systemConfiguration = LocalConfiguration.current
+            val activeLanguage = state.languageMode ?: LanguageMode.systemFallback(
+                systemConfiguration.locales[0])
+            val localizedContext = remember(activeLanguage, systemConfiguration) {
+                createConfigurationContext(Configuration(systemConfiguration).apply {
+                    setLocale(activeLanguage.locale)
+                })
+            }
             val useDark = state.themeMode.usesDark(isSystemInDarkTheme())
             LaunchedEffect(useDark) {
                 val style = if (useDark) SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
@@ -57,8 +74,11 @@ class MainActivity : ComponentActivity() {
                     android.graphics.Color.TRANSPARENT)
                 enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
             }
-            MaterialTheme(colorScheme = if (useDark) darkColorScheme() else lightColorScheme()) {
-                App(state, model, useDark)
+            CompositionLocalProvider(LocalContext provides localizedContext,
+                LocalConfiguration provides localizedContext.resources.configuration) {
+                MaterialTheme(colorScheme = if (useDark) darkColorScheme() else lightColorScheme()) {
+                    App(state, model, useDark)
+                }
             }
         }
     }
@@ -67,10 +87,11 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
     val snackbarHostState = remember { SnackbarHostState() }
-    LaunchedEffect(model) {
+    val uiContext = LocalContext.current
+    LaunchedEffect(model, uiContext) {
         model.apiNotices.collect { message ->
             withTimeoutOrNull(2500L) {
-                snackbarHostState.showSnackbar(message, duration = SnackbarDuration.Indefinite)
+                snackbarHostState.showSnackbar(uiContext.uiString(message), duration = SnackbarDuration.Indefinite)
             }
         }
     }
@@ -163,9 +184,9 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
                 verticalAlignment = Alignment.CenterVertically) {
                 if (page == BottomTab.SETTINGS.index && settingsDestination != SettingsDestination.HOME &&
                     (settingsDestination != SettingsDestination.API_EDIT || !editorReady)) {
-                    TextButton(onClick = goBackSettings) { Text("‹ 返回") }
+                    TextButton(onClick = goBackSettings) { UiText("‹ 返回") }
                 }
-                Text(when { creating || editingId != null -> "编辑阅读模式";
+                UiText(when { creating || editingId != null -> "编辑阅读模式";
                     page == BottomTab.READING.index -> "AI 阅读助手";
                     page == BottomTab.PROMPTS.index -> "提示词管理";
                     page == BottomTab.HISTORY.index -> if (historyId == null) "阅读历史" else "历史报告";
@@ -191,7 +212,7 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
                         BottomTab.SETTINGS -> R.drawable.ic_settings_nav
                     }
                     Icon(painterResource(iconRes), contentDescription = null, tint = iconColor)
-                }, label = { Text(tab.title, maxLines = 1,
+                }, label = { UiText(tab.title, maxLines = 1,
                     overflow = TextOverflow.Ellipsis) }, alwaysShowLabel = true)
             }
         } }
@@ -203,7 +224,7 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
             page == BottomTab.HISTORY.index && historyId != null -> ReadingHistoryDetailScreen(
                 historyState, historyModel, onBack = { historyId = null },
                 onPreviewHtml = { historyPreviewMarkdown = it },
-                fontSizePx = state.htmlFontSizePx, modifier = nestedModifier)
+                fontSizePx = state.htmlFontSizePx, modifier = Modifier.fillMaxSize().padding(padding))
             page == BottomTab.HISTORY.index -> ReadingHistoryListScreen(historyState, historyModel,
                 onOpen = { historyId = it }, modifier = nestedModifier)
             page == BottomTab.SETTINGS.index -> when (settingsDestination) {
@@ -212,16 +233,17 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
                 SettingsDestination.API_LIST -> ApiSettingsList(state, model,
                     onEdit = { id -> apiEditorId = id; settingsDestination = SettingsDestination.API_EDIT },
                     onAdd = { apiCreating = true; apiEditorId = null; settingsDestination = SettingsDestination.API_EDIT },
-                    modifier = nestedModifier)
+                    modifier = Modifier.fillMaxSize().padding(padding))
                 SettingsDestination.API_EDIT -> if (editorReady) ApiSettingsEditor(state, model,
                     isNew = apiCreating, onBack = goBackSettings, onSaved = goBackSettings,
                     snackbarHostState = snackbarHostState, modifier = Modifier.fillMaxSize().padding(padding))
                     else Box(nestedModifier) {
                         if (state.apiProfilesError != null || state.settingsMessage?.startsWith("无法切换") == true)
-                            Text(state.apiProfilesError ?: state.settingsMessage.orEmpty())
+                            UiText(state.apiProfilesError ?: state.settingsMessage.orEmpty())
                         else CircularProgressIndicator()
                     }
                 SettingsDestination.APPEARANCE -> AppearanceSettingsScreen(state, model, modifier)
+                SettingsDestination.LANGUAGE -> LanguageSettingsScreen(state, model, modifier)
                 SettingsDestination.HISTORY_DATA -> HistoryDataSettingsScreen(state, model,
                     historyModel, historyState,
                     onOpenHistory = { settingsDestination = SettingsDestination.HISTORY_LIST },
@@ -231,11 +253,11 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
                     modifier = nestedModifier)
                 SettingsDestination.HISTORY_DETAIL -> ReadingHistoryDetailScreen(historyState, historyModel,
                     onBack = goBackSettings, onPreviewHtml = { historyPreviewMarkdown = it },
-                    fontSizePx = state.htmlFontSizePx, modifier = nestedModifier)
+                    fontSizePx = state.htmlFontSizePx, modifier = Modifier.fillMaxSize().padding(padding))
                 SettingsDestination.ABOUT -> AboutScreen(modifier)
             }
             state.modes.isEmpty() && page != BottomTab.READING.index ->
-                Text("提示词数据读取失败：${state.storageError ?: "未知错误"}", modifier = modifier)
+                UiText("提示词数据读取失败：${state.storageError ?: "未知错误"}", modifier = modifier)
             creating || editingId != null -> ModeEditor(
                 mode = state.modes.firstOrNull { it.id == editingId },
                 onSave = { name, prompt -> model.saveMode(editingId, name, prompt) },
@@ -257,8 +279,8 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
     }
     if (state.modes.isNotEmpty() && state.storageError != null) {
         AlertDialog(onDismissRequest = model::clearStorageError,
-            title = { Text("提示词保存失败") }, text = { Text(state.storageError.orEmpty()) },
-            confirmButton = { TextButton(onClick = model::clearStorageError) { Text("知道了") } })
+            title = { UiText("提示词保存失败") }, text = { UiText(state.storageError.orEmpty()) },
+            confirmButton = { TextButton(onClick = model::clearStorageError) { UiText("知道了") } })
     }
 }
 
@@ -274,6 +296,14 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
     val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
     val resultScroll = rememberLazyListState()
+    val thinkingScrollBoundary = remember {
+        object : NestedScrollConnection {
+            override fun onPostScroll(consumed: Offset, available: Offset,
+                                      source: NestedScrollSource): Offset = Offset(0f, available.y)
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity =
+                Velocity(0f, available.y)
+        }
+    }
     val userDraggingResult by resultScroll.interactionSource.collectIsDraggedAsState()
     var followResult by remember { mutableStateOf(true) }
     var confirmClearResult by remember { mutableStateOf(false) }
@@ -322,36 +352,36 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
         Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
         val currentApi = state.apiProfiles.firstOrNull { it.id == state.selectedApiProfileId }
-        Text("阅读配置", style = MaterialTheme.typography.titleMedium)
-        Text("${currentApi?.name ?: "未载入"} · ${state.settings.modelId.ifBlank { "未配置模型" }}",
+        UiText("阅读配置", style = MaterialTheme.typography.titleMedium)
+        androidx.compose.material3.Text("${currentApi?.name ?: context.uiString("未载入")} · ${state.settings.modelId.ifBlank { context.uiString("未配置模型") }}",
             style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Box {
             TextButton(onClick = { apiExpanded = true }, enabled = state.apiProfiles.isNotEmpty()) {
-                Text("切换 API 配置  ⌄")
+                UiText("切换 API 配置  ⌄")
             }
             DropdownMenu(expanded = apiExpanded, onDismissRequest = { apiExpanded = false }) {
                 state.apiProfiles.forEach { profile ->
-                    DropdownMenuItem(text = { Text("${profile.name} · ${profile.config.modelId.ifBlank { "未配置模型" }}") },
+                    DropdownMenuItem(text = { androidx.compose.material3.Text("${profile.name} · ${profile.config.modelId.ifBlank { context.uiString("未配置模型") }}") },
                         onClick = { model.selectApiProfile(profile.id); apiExpanded = false })
                 }
             }
         }
-        if (state.loaded && state.modes.isEmpty()) Text("提示词数据读取失败：${state.storageError ?: "未知错误"}",
+        if (state.loaded && state.modes.isEmpty()) UiText("提示词数据读取失败：${state.storageError ?: "未知错误"}",
             color = MaterialTheme.colorScheme.error)
         Box {
             TextButton(onClick = { expanded = true }) {
-                Text("${state.modes.firstOrNull { it.id == state.selectedModeId }?.name ?: "选择阅读模式"}  ⌄",
+                androidx.compose.material3.Text("${state.modes.firstOrNull { it.id == state.selectedModeId }?.name ?: context.uiString("选择阅读模式")}  ⌄",
                     maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                Text("内置阅读模式", modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                UiText("内置阅读模式", modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     style = MaterialTheme.typography.labelMedium)
-                state.modes.filter { it.builtIn }.forEach { mode -> DropdownMenuItem(text = { Text(mode.name) },
+                state.modes.filter { it.builtIn }.forEach { mode -> DropdownMenuItem(text = { androidx.compose.material3.Text(mode.name) },
                     onClick = { model.selectMode(mode.id); expanded = false }) }
                 HorizontalDivider()
-                Text("我的自定义提示词", modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                UiText("我的自定义提示词", modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     style = MaterialTheme.typography.labelMedium)
-                state.modes.filterNot { it.builtIn }.forEach { mode -> DropdownMenuItem(text = { Text(mode.name) },
+                state.modes.filterNot { it.builtIn }.forEach { mode -> DropdownMenuItem(text = { androidx.compose.material3.Text(mode.name) },
                     onClick = { model.selectMode(mode.id); expanded = false }) }
             }
         }
@@ -359,40 +389,40 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
         ElevatedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-            Text("文章内容", style = MaterialTheme.typography.titleMedium)
-            Text("${state.article.length} 字", style = MaterialTheme.typography.bodySmall)
+            UiText("文章内容", style = MaterialTheme.typography.titleMedium)
+            UiText("${state.article.length} 字", style = MaterialTheme.typography.bodySmall)
         }
         OutlinedTextField(value = state.article, onValueChange = model::setArticle,
-            placeholder = { Text("在这里粘贴文章") },
+            placeholder = { UiText("在这里粘贴文章") },
             maxLines = 10,
             modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp, max = 280.dp))
         Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-            TextButton(onClick = model::clearArticle, enabled = state.article.isNotEmpty()) { Text("清空文章") }
+            TextButton(onClick = model::clearArticle, enabled = state.article.isNotEmpty()) { UiText("清空文章") }
         }
         OutlinedButton(onClick = { showPreprocessSettings = true }, modifier = Modifier.fillMaxWidth()) {
-            Text("文章预处理设置")
+            UiText("文章预处理设置")
         }
         OutlinedButton(onClick = { preview = model.processedArticle() },
             enabled = state.article.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
-            Text("预览处理结果")
+            UiText("预览处理结果")
         }
         OutlinedButton(onClick = { finalPreview = model.finalRequestPreview() },
             enabled = state.article.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
-            Text("预览最终发送内容")
+            UiText("预览最终发送内容")
         }
         Button(onClick = { if (active) model.stopReading() else requestReading() },
             enabled = active || state.article.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
-            Text(if (state.status == ReadingStatus.WaitingForRetry) "取消重试" else if (active) "停止生成" else "开始阅读")
+            UiText(if (state.status == ReadingStatus.WaitingForRetry) "取消重试" else if (active) "停止生成" else "开始阅读")
         }
         if (!active && (state.status != ReadingStatus.Idle || state.result.isNotEmpty())) {
             OutlinedButton(onClick = { requestReading() }, enabled = state.article.isNotBlank(),
-                modifier = Modifier.fillMaxWidth()) { Text("重新生成") }
+                modifier = Modifier.fillMaxWidth()) { UiText("重新生成") }
         }
         } }
         ElevatedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("AI 阅读结果", style = MaterialTheme.typography.titleMedium)
-        Text(when (state.status) {
+        UiText("AI 阅读结果", style = MaterialTheme.typography.titleMedium)
+        UiText(when (state.status) {
             ReadingStatus.Idle -> when (state.markdownSource) {
                 MarkdownSource.MANUAL -> "手动 Markdown"
                 MarkdownSource.EDITED_AI -> "已手动修改"
@@ -411,17 +441,18 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
             ReadingStatus.Error -> "生成失败"
         })
         if (active) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        state.readingError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        state.historySaveMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        state.readingError?.let { UiText(it, color = MaterialTheme.colorScheme.error) }
+        state.historySaveMessage?.let { UiText(it, color = MaterialTheme.colorScheme.error) }
         if (state.thinking.isNotEmpty()) {
             var thinkingExpanded by remember { mutableStateOf(false) }
             ElevatedCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp)) {
                     TextButton(onClick = { thinkingExpanded = !thinkingExpanded }) {
-                        Text(if (thinkingExpanded) "思考过程  ⌃" else "思考过程  ⌄")
+                        UiText(if (thinkingExpanded) "思考过程  ⌃" else "思考过程  ⌄")
                     }
                     if (thinkingExpanded) SelectionContainer {
-                        Text(state.thinking, modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp)
+                        androidx.compose.material3.Text(state.thinking, modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp)
+                            .nestedScroll(thinkingScrollBoundary)
                             .verticalScroll(rememberScrollState()))
                     }
                 }
@@ -433,28 +464,28 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
                 onClick = { model.setMarkdownViewMode(MarkdownViewMode.EDIT) },
                 enabled = !active, shape = RoundedCornerShape(24.dp),
                 modifier = Modifier.weight(1f).heightIn(min = 56.dp).fillMaxHeight(),
-                label = { Text("编辑 Markdown", textAlign = TextAlign.Center,
+                label = { UiText("编辑 Markdown", textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth()) })
             FilterChip(selected = state.markdownViewMode == MarkdownViewMode.PREVIEW,
                 onClick = { model.setMarkdownViewMode(MarkdownViewMode.PREVIEW) },
                 enabled = !active, shape = RoundedCornerShape(24.dp),
                 modifier = Modifier.weight(1f).heightIn(min = 56.dp).fillMaxHeight(),
-                label = { Text("预览 Markdown", textAlign = TextAlign.Center,
+                label = { UiText("预览 Markdown", textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth()) })
         }
         if (!active && state.markdownViewMode == MarkdownViewMode.EDIT) {
             OutlinedTextField(value = state.result, onValueChange = model::setMarkdown,
-                placeholder = { Text("可粘贴其他 AI 软件生成的 Markdown，也可编辑 AIReader 生成的阅读报告。") },
+                placeholder = { UiText("可粘贴其他 AI 软件生成的 Markdown，也可编辑 AIReader 生成的阅读报告。") },
                 modifier = Modifier.fillMaxWidth().height(360.dp))
         } else if (state.result.isEmpty()) {
             OutlinedCard(Modifier.fillMaxWidth().height(360.dp)) {
                 Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
-                    Text(if (active) "等待模型输出…" else "暂无 Markdown 内容。")
+                    UiText(if (active) "等待模型输出…" else "暂无 Markdown 内容。")
                 }
             }
         } else {
             if (active && !followResult) {
-                TextButton(onClick = { followResult = true }) { Text("回到底部") }
+                TextButton(onClick = { followResult = true }) { UiText("回到底部") }
             }
             OutlinedCard(Modifier.fillMaxWidth().height(360.dp)) {
                 MarkdownResult(state.result, resultScroll, streaming = active)
@@ -465,15 +496,17 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
             OutlinedButton(onClick = { clipboard.setText(AnnotatedString(state.result)) },
                 enabled = state.result.isNotEmpty(), shape = RoundedCornerShape(24.dp),
                 modifier = Modifier.weight(1f).heightIn(min = 56.dp).fillMaxHeight()) {
-                Text("复制 Markdown", textAlign = TextAlign.Center)
+                UiText("复制 Markdown", textAlign = TextAlign.Center)
             }
             Box(Modifier.weight(1f).heightIn(min = 56.dp).fillMaxHeight()) {
                 OutlinedButton(onClick = { moreActions = true }, shape = RoundedCornerShape(24.dp),
                     modifier = Modifier.fillMaxSize()) {
-                    Text("更多操作", textAlign = TextAlign.Center)
+                    UiText("更多操作", textAlign = TextAlign.Center)
                 }
-                DropdownMenu(expanded = moreActions, onDismissRequest = { moreActions = false }) {
-                    DropdownMenuItem(text = { Text("HTML 预览") }, enabled = htmlReady && !htmlBusy,
+                DropdownMenu(expanded = moreActions, onDismissRequest = { moreActions = false },
+                    modifier = Modifier.widthIn(min = 220.dp).clip(RoundedCornerShape(16.dp))) {
+                    DropdownMenuItem(text = { UiText("HTML 预览") }, enabled = htmlReady && !htmlBusy,
+                        modifier = Modifier.heightIn(min = 52.dp),
                         onClick = {
                             moreActions = false; htmlBusy = true
                             scope.launch {
@@ -482,7 +515,8 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
                                 finally { htmlBusy = false }
                             }
                         })
-                    DropdownMenuItem(text = { Text("浏览器打开") }, enabled = htmlReady && !htmlBusy,
+                    DropdownMenuItem(text = { UiText("浏览器打开") }, enabled = htmlReady && !htmlBusy,
+                        modifier = Modifier.heightIn(min = 52.dp),
                         onClick = {
                             moreActions = false; htmlBusy = true
                             scope.launch {
@@ -496,7 +530,8 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
                                 } finally { htmlBusy = false }
                             }
                         })
-                    DropdownMenuItem(text = { Text("保存 HTML") }, enabled = htmlReady && !htmlBusy,
+                    DropdownMenuItem(text = { UiText("保存 HTML") }, enabled = htmlReady && !htmlBusy,
+                        modifier = Modifier.heightIn(min = 52.dp),
                         onClick = {
                             moreActions = false; htmlBusy = true
                             scope.launch {
@@ -506,33 +541,37 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
                             }
                         })
                     HorizontalDivider()
-                    DropdownMenuItem(text = { Text("分享结果") }, enabled = state.result.isNotEmpty(), onClick = {
+                    DropdownMenuItem(text = { UiText("分享结果") }, enabled = state.result.isNotEmpty(),
+                        modifier = Modifier.heightIn(min = 52.dp), onClick = {
                         moreActions = false
                         val send = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
                             putExtra(Intent.EXTRA_TEXT, state.result)
                         }
-                        try { context.startActivity(Intent.createChooser(send, "分享阅读结果")) }
+                        try { context.startActivity(Intent.createChooser(send, context.uiString("分享阅读结果"))) }
                         catch (_: Exception) { model.reportShareFailure() }
                     })
-                    DropdownMenuItem(text = { Text("保存 Markdown") }, enabled = state.result.isNotEmpty(), onClick = {
+                    DropdownMenuItem(text = { UiText("保存 Markdown") }, enabled = state.result.isNotEmpty(),
+                        modifier = Modifier.heightIn(min = 52.dp), onClick = {
                         moreActions = false
                         if (model.prepareMarkdownExport()) exportLauncher.launch("AIReader-report.md")
                     })
-                    DropdownMenuItem(text = { Text("清空 Markdown") }, enabled = !active && state.result.isNotEmpty(),
+                    HorizontalDivider()
+                    DropdownMenuItem(text = { UiText("清空 Markdown") }, enabled = !active && state.result.isNotEmpty(),
+                        modifier = Modifier.heightIn(min = 52.dp),
                         onClick = { moreActions = false; confirmClearResult = true })
                 }
             }
         }
         if (htmlBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        Text("HTML 阅读字号：${state.htmlFontSizePx}px", style = MaterialTheme.typography.bodySmall)
+        UiText("HTML 阅读字号：${state.htmlFontSizePx}px", style = MaterialTheme.typography.bodySmall)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { model.setHtmlFontSize(state.htmlFontSizePx - 1) },
-                enabled = state.htmlFontSizePx > 14) { Text("A−") }
+                enabled = state.htmlFontSizePx > 14) { UiText("A−") }
             OutlinedButton(onClick = { model.setHtmlFontSize(state.htmlFontSizePx + 1) },
-                enabled = state.htmlFontSizePx < 36) { Text("A+") }
+                enabled = state.htmlFontSizePx < 36) { UiText("A+") }
         }
-        state.resultActionMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        state.resultActionMessage?.let { UiText(it, style = MaterialTheme.typography.bodySmall) }
         } }
         finalPreview?.let { request ->
             FinalRequestPreviewDialog(request, onDismiss = { finalPreview = null })
@@ -561,12 +600,12 @@ private fun FinalRequestPreviewDialog(request: FinalRequestPreview, onDismiss: (
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth().fillMaxHeight(0.86f)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("预览最终发送内容", style = MaterialTheme.typography.titleLarge)
-                Text(request.userMessage,
+                UiText("预览最终发送内容", style = MaterialTheme.typography.titleLarge)
+                androidx.compose.material3.Text(request.userMessage,
                     modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { clipboard.setText(AnnotatedString(request.userMessage)) }) { Text("复制完整内容") }
-                    TextButton(onClick = onDismiss) { Text("关闭") }
+                    Button(onClick = { clipboard.setText(AnnotatedString(request.userMessage)) }) { UiText("复制完整内容") }
+                    TextButton(onClick = onDismiss) { UiText("关闭") }
                 }
             }
         }
@@ -582,33 +621,35 @@ private fun PreprocessSettingsDialog(initial: PreprocessOptions, onSave: (Prepro
     var detectLists by remember(initial) { mutableStateOf(initial.detectNumberedLists) }
     val count = paraOnce.toIntOrNull()
     val validCount = count?.let { it in 1..100 } == true
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("文章预处理") },
+    AlertDialog(onDismissRequest = onDismiss, title = { UiText("文章预处理") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("启用预处理")
+                    UiText("启用预处理")
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
                 }
                 OutlinedTextField(value = paraOnce, onValueChange = { paraOnce = it },
-                    label = { Text("每组合并段数（1–100）") },
+                    label = { UiText("每组自然段数（1–100）") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     isError = !validCount, modifier = Modifier.fillMaxWidth())
+                UiText("例如设为 3，则每 3 个自然段合并为 1 段。",
+                    style = MaterialTheme.typography.bodySmall)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("自动识别标题")
+                    UiText("自动识别标题")
                     Switch(checked = detectTitles, onCheckedChange = { detectTitles = it })
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("自动识别编号列表")
+                    UiText("自动识别编号列表")
                     Switch(checked = detectLists, onCheckedChange = { detectLists = it })
                 }
             }
         },
         confirmButton = {
             TextButton(onClick = {
-                onSave(PreprocessOptions(enabled, count ?: 3, detectTitles, detectLists))
-            }, enabled = validCount) { Text("保存") }
+                onSave(PreprocessOptions(enabled, count ?: 1, detectTitles, detectLists))
+            }, enabled = validCount) { UiText("保存") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
+        dismissButton = { TextButton(onClick = onDismiss) { UiText("取消") } })
 }
 
 @Composable
@@ -617,12 +658,12 @@ private fun PreviewDialog(processed: String, originalLength: Int, onDismiss: () 
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth().fillMaxHeight(0.82f)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("预览处理结果", style = MaterialTheme.typography.titleLarge)
-                Text("处理前：$originalLength 字符 · 处理后：${processed.length} 字符")
-                Text(processed, modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()))
+                UiText("预览处理结果", style = MaterialTheme.typography.titleLarge)
+                UiText("处理前：$originalLength 字符 · 处理后：${processed.length} 字符")
+                androidx.compose.material3.Text(processed, modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { clipboard.setText(AnnotatedString(processed)) }) { Text("复制预处理结果") }
-                    TextButton(onClick = onDismiss) { Text("关闭") }
+                    Button(onClick = { clipboard.setText(AnnotatedString(processed)) }) { UiText("复制预处理结果") }
+                    TextButton(onClick = onDismiss) { UiText("关闭") }
                 }
             }
         }
@@ -635,15 +676,15 @@ private fun ModesPage(state: ReaderState, model: ReaderViewModel, onEdit: (Strin
     var pendingRestore by remember { mutableStateOf<ReadingMode?>(null) }
     var pendingDelete by remember { mutableStateOf<ReadingMode?>(null) }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("内置提示词", style = MaterialTheme.typography.titleLarge)
+        UiText("内置提示词", style = MaterialTheme.typography.titleLarge)
         state.modes.filter { it.builtIn }.forEach { mode -> ModeCard(mode, onEdit,
             onRestore = { pendingRestore = mode }, onDelete = null) }
         HorizontalDivider()
-        Text("我的自定义提示词", style = MaterialTheme.typography.titleLarge)
+        UiText("我的自定义提示词", style = MaterialTheme.typography.titleLarge)
         state.modes.filterNot { it.builtIn }.forEach { mode -> ModeCard(mode, onEdit,
             onRestore = null, onDelete = { pendingDelete = mode }) }
-        if (state.modes.none { !it.builtIn }) Text("还没有自定义阅读模式")
-        Button(onClick = onAdd, modifier = Modifier.fillMaxWidth()) { Text("+ 新增提示词") }
+        if (state.modes.none { !it.builtIn }) UiText("还没有自定义阅读模式")
+        Button(onClick = onAdd, modifier = Modifier.fillMaxWidth()) { UiText("+ 新增提示词") }
     }
     pendingRestore?.let { mode ->
         ConfirmModeActionDialog("恢复默认提示词？", "将从 APK 内置文件恢复“${mode.name}”的提示词正文。",
@@ -660,9 +701,9 @@ private fun ModesPage(state: ReaderState, model: ReaderViewModel, onEdit: (Strin
 @Composable
 internal fun ConfirmModeActionDialog(title: String, message: String,
                                     onConfirm: () -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(title) }, text = { Text(message) },
-        confirmButton = { TextButton(onClick = onConfirm) { Text("确认") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
+    AlertDialog(onDismissRequest = onDismiss, title = { UiText(title) }, text = { UiText(message) },
+        confirmButton = { TextButton(onClick = onConfirm) { UiText("确认") } },
+        dismissButton = { TextButton(onClick = onDismiss) { UiText("取消") } })
 }
 
 @Composable
@@ -670,11 +711,11 @@ private fun ModeCard(mode: ReadingMode, onEdit: (String) -> Unit,
                      onRestore: (() -> Unit)?, onDelete: (() -> Unit)?) {
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
-            Text(mode.name, style = MaterialTheme.typography.titleMedium)
+            androidx.compose.material3.Text(mode.name, style = MaterialTheme.typography.titleMedium)
             Row {
-                TextButton(onClick = { onEdit(mode.id) }) { Text("编辑") }
-                if (onRestore != null) TextButton(onClick = onRestore) { Text("恢复默认") }
-                if (onDelete != null) TextButton(onClick = onDelete) { Text("删除") }
+                TextButton(onClick = { onEdit(mode.id) }) { UiText("编辑") }
+                if (onRestore != null) TextButton(onClick = onRestore) { UiText("恢复默认") }
+                if (onDelete != null) TextButton(onClick = onDelete) { UiText("删除") }
             }
         }
     }
@@ -695,9 +736,9 @@ private fun ModeEditor(mode: ReadingMode?, onSave: suspend (String, String) -> B
     val leave = { if (hasChanges) confirmDiscard = true else onCancel() }
     BackHandler { if (!saving) leave() }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("模式名称") },
+        OutlinedTextField(value = name, onValueChange = { name = it }, label = { UiText("模式名称") },
             modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = prompt, onValueChange = { prompt = it }, label = { Text("提示词") },
+        OutlinedTextField(value = prompt, onValueChange = { prompt = it }, label = { UiText("提示词") },
             modifier = Modifier.fillMaxWidth().height(360.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
@@ -707,11 +748,11 @@ private fun ModeEditor(mode: ReadingMode?, onSave: suspend (String, String) -> B
                     saving = false
                     if (success) onSaved()
                 }
-            }, enabled = !saving && name.isNotBlank() && prompt.isNotBlank()) { Text("保存") }
-            OutlinedButton(onClick = leave, enabled = !saving) { Text("取消") }
+            }, enabled = !saving && name.isNotBlank() && prompt.isNotBlank()) { UiText("保存") }
+            OutlinedButton(onClick = leave, enabled = !saving) { UiText("取消") }
         }
-        if (onRestore != null) OutlinedButton(onClick = { confirmRestore = true }, enabled = !saving) { Text("恢复默认") }
-        if (onDelete != null) TextButton(onClick = { confirmDelete = true }, enabled = !saving) { Text("删除此提示词") }
+        if (onRestore != null) OutlinedButton(onClick = { confirmRestore = true }, enabled = !saving) { UiText("恢复默认") }
+        if (onDelete != null) TextButton(onClick = { confirmDelete = true }, enabled = !saving) { UiText("删除此提示词") }
     }
     if (confirmDiscard) ConfirmModeActionDialog("放弃未保存修改？", "编辑内容尚未保存。",
         onConfirm = { confirmDiscard = false; onCancel() },

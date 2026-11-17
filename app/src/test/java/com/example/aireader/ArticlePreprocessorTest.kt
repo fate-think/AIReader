@@ -5,6 +5,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class ArticlePreprocessorTest {
+    @Test fun newDefaultUsesOneNaturalParagraph() {
+        assertEquals(1, PreprocessOptions().paraOnce)
+        assertEquals("{段落1} 甲。\n{段落2} 乙。",
+            ArticlePreprocessor.process("甲。\n乙。", PreprocessOptions()))
+    }
+
     @Test fun paraOnceOneNumbersEachBodyLine() {
         assertEquals("{段落1} 甲。\n{段落2} 乙。",
             ArticlePreprocessor.process("甲。\n乙。", PreprocessOptions(paraOnce = 1)))
@@ -12,11 +18,11 @@ class ArticlePreprocessorTest {
 
     @Test fun threeBodyLinesAreConcatenatedExactly() {
         assertEquals("{段落1} 第一段内容。第二段内容。第三段内容。",
-            ArticlePreprocessor.process("第一段内容。\n第二段内容。\n第三段内容。", PreprocessOptions()))
+            ArticlePreprocessor.process("第一段内容。\n第二段内容。\n第三段内容。", PreprocessOptions(paraOnce = 3)))
     }
 
     @Test fun mergedBodyHasNoInsertedNewlineOrSpace() {
-        val actual = ArticlePreprocessor.process("甲。\n乙。\n丙。", PreprocessOptions())
+        val actual = ArticlePreprocessor.process("甲。\n乙。\n丙。", PreprocessOptions(paraOnce = 3))
         assertEquals("{段落1} 甲。乙。丙。", actual)
         assertFalse(actual.contains("甲。 乙。"))
         assertFalse(actual.contains("甲。\n乙。"))
@@ -24,7 +30,7 @@ class ArticlePreprocessorTest {
 
     @Test fun trailingShortBodyGroupIsEmitted() {
         assertEquals("{段落1} 甲。乙。丙。\n{段落2} 丁。",
-            ArticlePreprocessor.process("甲。\n乙。\n丙。\n丁。", PreprocessOptions()))
+            ArticlePreprocessor.process("甲。\n乙。\n丙。\n丁。", PreprocessOptions(paraOnce = 3)))
     }
 
     @Test fun titleGetsMatchingParagraphAndTitleNumber() {
@@ -54,22 +60,22 @@ class ArticlePreprocessorTest {
 
     @Test fun blankLinesAreIgnored() {
         assertEquals("{段落1} 甲。乙。",
-            ArticlePreprocessor.process("\n甲。\n   \n\t\n乙。\n", PreprocessOptions()))
+            ArticlePreprocessor.process("\n甲。\n   \n\t\n乙。\n", PreprocessOptions(paraOnce = 3)))
     }
 
     @Test fun bodyBufferIsFlushedBeforeTitle() {
         assertEquals("{段落1} 甲。乙。\n{段落2}{标题2} 小标题\n{段落3} 丙。",
-            ArticlePreprocessor.process("甲。\n乙。\n小标题\n丙。", PreprocessOptions()))
+            ArticlePreprocessor.process("甲。\n乙。\n小标题\n丙。", PreprocessOptions(paraOnce = 3)))
     }
 
     @Test fun bodyBufferIsFlushedBeforeNumberedList() {
         assertEquals("{段落1} 甲。乙。\n{段落2} 1. 项目\n{段落3} 丙。",
-            ArticlePreprocessor.process("甲。\n乙。\n1. 项目\n丙。", PreprocessOptions()))
+            ArticlePreprocessor.process("甲。\n乙。\n1. 项目\n丙。", PreprocessOptions(paraOnce = 3)))
     }
 
     @Test fun paragraphNumbersAreContinuousAcrossKinds() {
         assertEquals("{段落1} 甲。\n{段落2}{标题2} 标题\n{段落3} 1. 项目\n{段落4} 乙。丙。丁。",
-            ArticlePreprocessor.process("甲。\n标题\n1. 项目\n乙。\n丙。\n丁。", PreprocessOptions()))
+            ArticlePreprocessor.process("甲。\n标题\n1. 项目\n乙。\n丙。\n丁。", PreprocessOptions(paraOnce = 3)))
     }
 
     @Test fun disablingPreprocessingReturnsOriginalExactly() {
@@ -79,12 +85,12 @@ class ArticlePreprocessorTest {
 
     @Test fun windowsNewlinesAreSupported() {
         assertEquals("{段落1} 甲。乙。丙。",
-            ArticlePreprocessor.process("甲。\r\n乙。\r\n丙。", PreprocessOptions()))
+            ArticlePreprocessor.process("甲。\r\n乙。\r\n丙。", PreprocessOptions(paraOnce = 3)))
     }
 
     @Test fun mixedChineseAndEnglishIsPreserved() {
         assertEquals("{段落1} Kotlin 很好。Compose works!AI 阅读。",
-            ArticlePreprocessor.process("Kotlin 很好。\nCompose works!\nAI 阅读。", PreprocessOptions()))
+            ArticlePreprocessor.process("Kotlin 很好。\nCompose works!\nAI 阅读。", PreprocessOptions(paraOnce = 3)))
     }
 
     @Test fun originalArticleIsUnchanged() {
@@ -96,7 +102,7 @@ class ArticlePreprocessorTest {
     @Test fun titleAndListDetectionCanBeDisabledIndependently() {
         assertEquals("{段落1} 标题1. 列表正文。",
             ArticlePreprocessor.process("标题\n1. 列表\n正文。",
-                PreprocessOptions(detectTitles = false, detectNumberedLists = false)))
+                PreprocessOptions(paraOnce = 3, detectTitles = false, detectNumberedLists = false)))
     }
 
     @Test fun userMessageContainsOnlyPromptAndProcessedBody() {

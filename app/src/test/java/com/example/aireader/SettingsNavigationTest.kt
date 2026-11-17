@@ -6,8 +6,8 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class SettingsNavigationTest {
-    @Test fun homeHasExactlyFourMenusInRequestedOrder() {
-        assertEquals(listOf("大模型 API 配置", "夜间模式", "阅读历史与数据管理", "关于"),
+    @Test fun languageFollowsAppearanceOnSettingsHome() {
+        assertEquals(listOf("大模型 API 配置", "夜间模式", "语言", "阅读历史与数据管理", "关于"),
             settingsHomeDestinations.map { it.title })
         assertFalse(settingsHomeDestinations.contains(SettingsDestination.HISTORY_LIST))
         assertFalse(settingsHomeDestinations.any { it.title.contains("网络稳定性") })
@@ -26,6 +26,7 @@ class SettingsNavigationTest {
 
     @Test fun themeAndAboutReturnHomeWithoutCycle() {
         assertEquals(SettingsDestination.HOME, SettingsDestination.APPEARANCE.parent())
+        assertEquals(SettingsDestination.HOME, SettingsDestination.LANGUAGE.parent())
         assertEquals(SettingsDestination.HOME, SettingsDestination.ABOUT.parent())
         assertNull(SettingsDestination.HOME.parent())
     }

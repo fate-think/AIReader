@@ -40,6 +40,7 @@ fun SettingsHomeScreen(onOpen: (SettingsDestination) -> Unit, modifier: Modifier
     val entries = settingsHomeDestinations.map { destination -> when (destination) {
         SettingsDestination.API_LIST -> Triple(destination, "模型、思考深度、超时与重试", R.drawable.ic_smart_toy)
         SettingsDestination.APPEARANCE -> Triple(destination, "跟随系统、浅色、深色", R.drawable.ic_dark_mode)
+        SettingsDestination.LANGUAGE -> Triple(destination, "简体中文、繁體中文、English", null)
         SettingsDestination.HISTORY_DATA -> Triple(destination, "自动保存、原文存储、历史清理", R.drawable.ic_history)
         SettingsDestination.ABOUT -> Triple(destination, "版本信息、应用说明", null)
         else -> error("不是设置首页菜单")
@@ -48,8 +49,8 @@ fun SettingsHomeScreen(onOpen: (SettingsDestination) -> Unit, modifier: Modifier
         contentPadding = PaddingValues(16.dp)) {
         items(entries) { (destination, description, icon) ->
             ElevatedCard(modifier = Modifier.fillMaxWidth().clickable { onOpen(destination) }) {
-                ListItem(headlineContent = { Text(destination.title) },
-                    supportingContent = { Text(description) },
+                ListItem(headlineContent = { UiText(destination.title) },
+                    supportingContent = { UiText(description) },
                     leadingContent = {
                         if (icon == null) Icon(Icons.Outlined.Info, contentDescription = null)
                         else Icon(painterResource(icon), contentDescription = null)
@@ -63,48 +64,77 @@ fun SettingsHomeScreen(onOpen: (SettingsDestination) -> Unit, modifier: Modifier
 @Composable
 fun ApiSettingsList(state: ReaderState, model: ReaderViewModel,
                     onEdit: (String) -> Unit, onAdd: () -> Unit, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
     var pendingDelete by remember { mutableStateOf<ApiProfile?>(null) }
-    LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(16.dp)) {
-        item {
-            Text("已保存的 API 配置", style = MaterialTheme.typography.titleLarge)
-            state.apiProfilesError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        }
-        items(state.apiProfiles, key = { it.id }) { profile ->
-            ElevatedCard(Modifier.fillMaxWidth()) {
+    var profilesExpanded by remember { mutableStateOf(false) }
+    var globalExpanded by remember { mutableStateOf(false) }
+    Column(modifier.verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        OutlinedCard(Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth().clickable { profilesExpanded = !profilesExpanded }
+                .padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                UiText("API 配置列表", style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f))
+                UiText(if (profilesExpanded) "⌃" else "⌄")
+            }
+            if (profilesExpanded) {
+                HorizontalDivider()
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                state.apiProfilesError?.let { UiText(it, color = MaterialTheme.colorScheme.error) }
+                state.apiProfiles.forEach { profile ->
+                ElevatedCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp)) {
-                    Text("${if (profile.id == state.selectedApiProfileId) "当前 · " else ""}${profile.name}",
-                        style = MaterialTheme.typography.titleMedium)
-                    Text(profile.config.modelId.ifBlank { "未配置模型" },
-                        style = MaterialTheme.typography.bodySmall)
+                    androidx.compose.material3.Text("${if (profile.id == state.selectedApiProfileId) context.uiString("当前") + " · " else ""}${profile.name}",
+                        style = MaterialTheme.typography.titleMedium, maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    androidx.compose.material3.Text(profile.config.modelId.ifBlank { context.uiString("未配置模型") },
+                        style = MaterialTheme.typography.bodySmall, maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                     Row(modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         TextButton(onClick = { model.selectApiProfile(profile.id, notifySuccess = true) },
                             enabled = profile.id != state.selectedApiProfileId,
-                            modifier = Modifier.weight(1f)) { Text("使用") }
+                            modifier = Modifier.weight(1f)) { UiText("使用") }
                         TextButton(onClick = {
                             if (profile.id != state.selectedApiProfileId) model.selectApiProfile(profile.id)
                             onEdit(profile.id)
                         }, modifier = Modifier.weight(1f)) {
-                            Text(if (profile.id == state.selectedApiProfileId) "编辑" else "使用并编辑")
+                            UiText(if (profile.id == state.selectedApiProfileId) "编辑" else "使用并编辑")
                         }
                     }
                     Row(modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         TextButton(onClick = { model.copyApiProfile(profile.id, profile.name) },
-                            modifier = Modifier.weight(1f)) { Text("复制") }
+                            modifier = Modifier.weight(1f)) { UiText("复制") }
                         TextButton(onClick = { pendingDelete = profile },
                             enabled = state.apiProfiles.size > 1,
-                            modifier = Modifier.weight(1f)) { Text("删除") }
+                            modifier = Modifier.weight(1f)) { UiText("删除") }
                     }
                 }
             }
-        }
-        item {
+                }
             OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
-                Text("新增 API 配置")
+                UiText("新增 API 配置")
             }
-            state.settingsMessage?.let { Text(it) }
+            state.settingsMessage?.let { UiText(it) }
+                }
+            }
+        }
+        OutlinedCard(Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth().clickable { globalExpanded = !globalExpanded }
+                .padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                UiText("全局参数", style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f))
+                UiText(if (globalExpanded) "⌃" else "⌄")
+            }
+            state.globalApiSettingsMessage?.let {
+                UiText(it, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.error)
+            }
+            if (globalExpanded) {
+                HorizontalDivider()
+                GlobalApiSettingsForm(state, model, Modifier.padding(16.dp))
+            }
         }
     }
     pendingDelete?.let { profile ->
@@ -116,16 +146,48 @@ fun ApiSettingsList(state: ReaderState, model: ReaderViewModel,
 
 @Composable
 fun AppearanceSettingsScreen(state: ReaderState, model: ReaderViewModel, modifier: Modifier = Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("选择应用主题", style = MaterialTheme.typography.titleLarge)
-        ThemeMode.entries.forEach { mode ->
-            Row(modifier = Modifier.fillMaxWidth().clickable { model.setThemeMode(mode) }.padding(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                RadioButton(selected = state.themeMode == mode, onClick = null)
-                Text(mode.displayName, modifier = Modifier.padding(top = 12.dp))
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        UiText("选择应用主题", style = MaterialTheme.typography.titleLarge)
+        ElevatedCard(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(vertical = 4.dp)) {
+                ThemeMode.entries.forEachIndexed { index, mode ->
+                    if (index > 0) HorizontalDivider(Modifier.padding(horizontal = 16.dp))
+                    Row(modifier = Modifier.fillMaxWidth().clickable { model.setThemeMode(mode) }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        RadioButton(selected = state.themeMode == mode, onClick = null)
+                        UiText(mode.displayName, modifier = Modifier.padding(top = 12.dp))
+                    }
+                }
             }
         }
-        state.themeMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        state.themeMessage?.let { UiText(it, color = MaterialTheme.colorScheme.error) }
+    }
+}
+
+@Composable
+fun LanguageSettingsScreen(state: ReaderState, model: ReaderViewModel, modifier: Modifier = Modifier) {
+    val systemLocale = LocalContext.current.resources.configuration.locales[0]
+    val selected = state.languageMode ?: LanguageMode.systemFallback(systemLocale)
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        UiText("选择界面语言", style = MaterialTheme.typography.titleLarge)
+        ElevatedCard(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(vertical = 4.dp)) {
+                LanguageMode.entries.forEachIndexed { index, mode ->
+                    if (index > 0) HorizontalDivider(Modifier.padding(horizontal = 16.dp))
+                    Row(Modifier.fillMaxWidth().clickable { model.setLanguageMode(mode) }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        RadioButton(selected = selected == mode, onClick = null)
+                        androidx.compose.material3.Text(mode.nativeName,
+                            modifier = Modifier.padding(top = 12.dp))
+                    }
+                }
+            }
+        }
+        if (state.languageMode == null) UiText("当前按系统语言显示；其他系统语言使用简体中文。",
+            style = MaterialTheme.typography.bodySmall)
+        state.settingsMessage?.let { UiText(it, color = MaterialTheme.colorScheme.error) }
     }
 }
 
@@ -136,30 +198,30 @@ fun HistoryDataSettingsScreen(state: ReaderState, model: ReaderViewModel,
                               onOpenHistory: () -> Unit, modifier: Modifier = Modifier) {
     var confirmClearHistory by remember { mutableStateOf(false) }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("本地阅读历史", style = MaterialTheme.typography.titleLarge)
+        UiText("本地阅读历史", style = MaterialTheme.typography.titleLarge)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("自动保存阅读历史")
+            UiText("自动保存阅读历史")
             Switch(checked = state.historyOptions.autoSave, onCheckedChange = {
                 model.saveHistoryOptions(state.historyOptions.copy(autoSave = it))
             })
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("保存文章原文")
+            UiText("保存文章原文")
             Switch(checked = state.historyOptions.saveOriginalArticle,
                 enabled = state.historyOptions.autoSave, onCheckedChange = {
                     model.saveHistoryOptions(state.historyOptions.copy(saveOriginalArticle = it))
                 })
         }
-        Text("历史仅保存在本机，应用已禁用 Android 自动备份。卸载应用会删除本机历史；无法保证恢复。",
+        UiText("历史仅保存在本机，应用已禁用 Android 自动备份。卸载应用会删除本机历史；无法保证恢复。",
             style = MaterialTheme.typography.bodySmall)
         OutlinedButton(onClick = onOpenHistory, modifier = Modifier.fillMaxWidth()) {
-            Text("查看阅读历史")
+            UiText("查看阅读历史")
         }
         OutlinedButton(onClick = { confirmClearHistory = true }, modifier = Modifier.fillMaxWidth()) {
-            Text("清空全部阅读历史")
+            UiText("清空全部阅读历史")
         }
-        historyState.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        state.settingsMessage?.let { Text(it) }
+        historyState.message?.let { UiText(it, color = MaterialTheme.colorScheme.error) }
+        state.settingsMessage?.let { UiText(it) }
     }
     if (confirmClearHistory) ConfirmModeActionDialog("确定清空全部阅读历史？",
         "全部已保存的报告和文章原文将从本机删除，无法恢复。提示词、API 配置及密钥不会改变。",
@@ -183,27 +245,27 @@ fun AboutScreen(modifier: Modifier = Modifier) {
             .getOrNull() ?: "无法读取版本信息"
     }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("AIReader", style = MaterialTheme.typography.headlineMedium)
-        Text("版本：$version")
-        Text("AIReader 是一款基于 Kotlin 和 Jetpack Compose 开发的 Android AI 阅读助手，支持自定义阅读提示词、文章预处理、OpenAI 兼容接口及本地阅读历史。")
+        UiText("AIReader", style = MaterialTheme.typography.headlineMedium)
+        UiText("版本：$version")
+        UiText("AIReader 是一款基于 Kotlin 和 Jetpack Compose 开发的 Android AI 阅读助手，支持自定义阅读提示词、文章预处理、OpenAI 兼容接口及本地阅读历史。")
         HorizontalDivider()
-        Text("开源项目", style = MaterialTheme.typography.titleMedium)
+        UiText("开源项目", style = MaterialTheme.typography.titleMedium)
         ElevatedCard(Modifier.fillMaxWidth()) {
             Column {
-                ListItem(headlineContent = { Text("开源地址") }, supportingContent = { Text("GitHub · AIReader") },
+                ListItem(headlineContent = { UiText("开源地址") }, supportingContent = { UiText("GitHub · AIReader") },
                     trailingContent = { Icon(painterResource(R.drawable.ic_chevron_right), null) },
                     modifier = Modifier.clickable { openLink("https://github.com/fate-think/AIReader") })
                 HorizontalDivider()
-                ListItem(headlineContent = { Text("开源协议") }, supportingContent = { Text("Apache License 2.0") },
+                ListItem(headlineContent = { UiText("开源协议") }, supportingContent = { UiText("Apache License 2.0") },
                     trailingContent = { Icon(painterResource(R.drawable.ic_chevron_right), null) },
                     modifier = Modifier.clickable { openLink("https://github.com/fate-think/AIReader/blob/main/LICENSE") })
             }
         }
-        if (linkError) Text("无法打开浏览器，请检查设备上的浏览器应用。",
+        if (linkError) UiText("无法打开浏览器，请检查设备上的浏览器应用。",
             color = MaterialTheme.colorScheme.error)
         HorizontalDivider()
-        Text("数据与隐私", style = MaterialTheme.typography.titleMedium)
-        Text("API 请求发送到您配置的服务地址。API Key 使用 Android Keystore 加密保存。阅读历史保存在本机，是否保存由阅读历史设置控制。文件导出与分享均由您主动发起。")
+        UiText("数据与隐私", style = MaterialTheme.typography.titleMedium)
+        UiText("API 请求发送到您配置的服务地址。API Key 使用 Android Keystore 加密保存。阅读历史保存在本机，是否保存由阅读历史设置控制。文件导出与分享均由您主动发起。")
     }
 }
 
@@ -212,6 +274,7 @@ fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel, isNew: Boolean
                       onBack: () -> Unit, onSaved: () -> Unit,
                       snackbarHostState: SnackbarHostState, modifier: Modifier) {
     val selectedProfile = if (isNew) null else state.apiProfiles.firstOrNull { it.id == state.selectedApiProfileId }
+    val uiContext = LocalContext.current
     val initial = if (isNew) ApiSettings() else state.settings
     val editorId = selectedProfile?.id ?: "new"
     var savedSnapshot by remember(editorId) {
@@ -226,19 +289,7 @@ fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel, isNew: Boolean
     var deleteApiKey by remember(editorId) { mutableStateOf(false) }
     var modelId by remember(editorId) { mutableStateOf(initial.modelId) }
     var temperature by remember(editorId) { mutableStateOf(initial.temperature) }
-    var maxTokens by remember(editorId) { mutableStateOf(initial.maxOutputTokens) }
-    var streaming by remember(editorId) { mutableStateOf(initial.streaming) }
     var sendTemperature by remember(editorId) { mutableStateOf(initial.sendTemperature) }
-    var useMaxCompletionTokens by remember(editorId) { mutableStateOf(initial.useMaxCompletionTokens) }
-    var allowHttp by remember(editorId) { mutableStateOf(initial.allowHttp) }
-    var autoRetry by remember(editorId) { mutableStateOf(initial.autoRetry) }
-    var retryHttp504 by remember(editorId) { mutableStateOf(initial.retryHttp504) }
-    var maxRetries by remember(editorId) { mutableStateOf(initial.maxRetries) }
-    var connectTimeout by remember(editorId) { mutableStateOf(initial.connectTimeoutSeconds) }
-    var readTimeout by remember(editorId) { mutableStateOf(initial.readTimeoutSeconds) }
-    var sendReasoningEffort by remember(editorId) { mutableStateOf(initial.sendReasoningEffort) }
-    var reasoningEffort by remember(editorId) { mutableStateOf(initial.reasoningEffort) }
-    var reasoningExpanded by remember { mutableStateOf(false) }
     var advancedExpanded by remember(editorId) { mutableStateOf(false) }
     var modelQuery by remember(editorId) { mutableStateOf("") }
     var models by remember(editorId) { mutableStateOf<List<String>?>(null) }
@@ -247,20 +298,15 @@ fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel, isNew: Boolean
     var modelError by remember(editorId) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val modelSource = baseUrl to newApiKey
-    LaunchedEffect(modelSource, deleteApiKey, allowHttp) { models = null; modelDialog = false }
-    val draft = ApiSettings(baseUrl, modelId, temperature, maxTokens, streaming,
-        sendTemperature, useMaxCompletionTokens, allowHttp, initial.hasApiKey, initial.keyNeedsReentry,
-        autoRetry, maxRetries, connectTimeout, readTimeout, retryHttp504,
-        sendReasoningEffort, reasoningEffort)
+    LaunchedEffect(modelSource, deleteApiKey, state.globalApiSettings.allowHttp) {
+        models = null; modelDialog = false
+    }
+    val draft = ApiSettings(baseUrl, modelId, temperature, sendTemperature,
+        initial.hasApiKey, initial.keyNeedsReentry)
     val valid = profileName.isNotBlank() && (isNew || selectedProfile != null) &&
-        maxTokens.toIntOrNull()?.let { it > 0 } == true &&
-        (!sendTemperature || temperature.toDoubleOrNull()?.let { it in 0.0..2.0 } == true) &&
-        maxRetries.toIntOrNull()?.let { it in 0..5 } == true &&
-        connectTimeout.toIntOrNull()?.let { it in 10..60 } == true &&
-        readTimeout.toIntOrNull()?.let { it in 30..600 } == true
-    LaunchedEffect(temperature, maxTokens, sendTemperature) {
-        if (maxTokens.toIntOrNull()?.let { it > 0 } != true ||
-            sendTemperature && temperature.toDoubleOrNull()?.let { it in 0.0..2.0 } != true) {
+        (!sendTemperature || temperature.toDoubleOrNull()?.let { it in 0.0..2.0 } == true)
+    LaunchedEffect(temperature, sendTemperature) {
+        if (sendTemperature && temperature.toDoubleOrNull()?.let { it in 0.0..2.0 } != true) {
             advancedExpanded = true
         }
     }
@@ -272,13 +318,13 @@ fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel, isNew: Boolean
     LaunchedEffect(testNotice) {
         val notice = testNotice ?: return@LaunchedEffect
         withTimeoutOrNull(if (notice.success) 2500L else 8000L) {
-            snackbarHostState.showSnackbar(notice.message, duration = SnackbarDuration.Indefinite)
+            snackbarHostState.showSnackbar(uiContext.uiString(notice.message), duration = SnackbarDuration.Indefinite)
         }
     }
     Scaffold(modifier = modifier, contentWindowInsets = WindowInsets(0, 0, 0, 0), bottomBar = {
         Surface(shadowElevation = 6.dp) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
-                if (!valid) Text("请检查配置名称及参数范围。", style = MaterialTheme.typography.bodySmall,
+                if (!valid) UiText("请检查配置名称及参数范围。", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedButton(onClick = { model.testConnection(draft, newApiKey, deleteApiKey,
@@ -286,7 +332,7 @@ fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel, isNew: Boolean
                         testNotice = ApiTestNotice(++testNoticeId, message, success)
                     } }, enabled = valid && !saving && !state.testingConnection,
                         modifier = Modifier.weight(1f).heightIn(min = 52.dp)) {
-                        Text(if (state.testingConnection) "测试中…" else "测试连接")
+                        UiText(if (state.testingConnection) "测试中…" else "测试连接")
                     }
                     Button(onClick = {
                         val submittedName = profileName
@@ -306,7 +352,7 @@ fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel, isNew: Boolean
                         }
                     }, enabled = valid && !saving && !state.testingConnection,
                         modifier = Modifier.weight(1f).heightIn(min = 52.dp)) {
-                        Text(if (saving) "保存中…" else "保存配置")
+                        UiText(if (saving) "保存中…" else "保存配置")
                     }
                 }
             }
@@ -314,156 +360,93 @@ fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel, isNew: Boolean
     }) { innerPadding ->
     Column(Modifier.fillMaxSize().padding(innerPadding).verticalScroll(rememberScrollState())
         .padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        TextButton(onClick = requestBack, enabled = !saving) { Text("← 返回配置列表") }
+        TextButton(onClick = requestBack, enabled = !saving) { UiText("← 返回配置列表") }
         ElevatedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("基本连接", style = MaterialTheme.typography.titleLarge)
-        OutlinedTextField(profileName, { profileName = it }, label = { Text("配置名称") },
+        UiText("基本连接", style = MaterialTheme.typography.titleLarge)
+        OutlinedTextField(profileName, { profileName = it }, label = { UiText("配置名称") },
             isError = profileName.isBlank(), modifier = Modifier.fillMaxWidth())
-        Text("阅读文章会发送至您配置的第三方 API 服务。测试连接使用下方当前参数，可能产生调用费用。",
+        UiText("阅读文章会发送至您配置的第三方 API 服务。测试连接使用下方当前参数，可能产生调用费用。",
             style = MaterialTheme.typography.bodySmall)
-        OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("API Base URL") }, modifier = Modifier.fillMaxWidth())
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("允许 HTTP Base URL")
-            Switch(checked = allowHttp, onCheckedChange = { allowHttp = it })
-        }
-        if (allowHttp) {
-            Text("HTTP 会以明文传输 API Key 和文章内容，请仅在信任该连接时使用。",
+        OutlinedTextField(baseUrl, { baseUrl = it }, label = { UiText("API Base URL") }, modifier = Modifier.fillMaxWidth())
+        if (baseUrl.trim().startsWith("http://", ignoreCase = true) && !state.globalApiSettings.allowHttp)
+            UiText("当前全局参数禁止 HTTP BaseURL，请先在全局参数中开启允许 HTTP。",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-        }
-        Text(when {
+        UiText(when {
             initial.keyNeedsReentry -> "原有 API Key 无法解密，请重新输入。"
             deleteApiKey -> "保存后将删除已配置的 API Key。"
             initial.hasApiKey -> "API Key：已配置。留空可保留现有密钥。"
             else -> "API Key：未配置。"
         })
         OutlinedTextField(newApiKey, { newApiKey = it; if (it.isNotEmpty()) deleteApiKey = false },
-            label = { Text(if (isNew) "API Key（可选）" else "新 API Key（留空保留原值）") },
+            label = { UiText(if (isNew) "API Key（可选）" else "新 API Key（留空保留原值）") },
             visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth())
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = { showApiKey = !showApiKey }) { Text(if (showApiKey) "隐藏密钥" else "显示密钥") }
+            TextButton(onClick = { showApiKey = !showApiKey }) { UiText(if (showApiKey) "隐藏密钥" else "显示密钥") }
             if (initial.hasApiKey || initial.keyNeedsReentry) {
                 TextButton(onClick = { deleteApiKey = !deleteApiKey; if (deleteApiKey) newApiKey = "" }) {
-                    Text(if (deleteApiKey) "取消删除" else "删除现有密钥")
+                    UiText(if (deleteApiKey) "取消删除" else "删除现有密钥")
                 }
             }
         }
         } }
         ElevatedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("模型配置", style = MaterialTheme.typography.titleLarge)
-        OutlinedTextField(modelId, { modelId = it }, label = { Text("Model ID") }, modifier = Modifier.fillMaxWidth())
+        UiText("模型配置", style = MaterialTheme.typography.titleLarge)
+        OutlinedTextField(modelId, { modelId = it }, label = { UiText("Model ID") }, modifier = Modifier.fillMaxWidth())
         OutlinedButton(onClick = {
             if (baseUrl.isBlank()) { modelError = "请先填写 API Base URL。"; return@OutlinedButton }
             val requestedSource = Triple(baseUrl, newApiKey, deleteApiKey)
-            val requestedHttp = allowHttp
+            val requestedHttp = state.globalApiSettings.allowHttp
             loadingModels = true
             modelError = null
             scope.launch {
                 try {
                     val loaded = model.listModels(draft, newApiKey, deleteApiKey, selectedProfile?.id)
-                    if (requestedSource == Triple(baseUrl, newApiKey, deleteApiKey) && requestedHttp == allowHttp) {
+                    if (requestedSource == Triple(baseUrl, newApiKey, deleteApiKey) &&
+                        requestedHttp == state.globalApiSettings.allowHttp) {
                         models = loaded; modelQuery = ""; modelDialog = true
                     }
                 } catch (error: Exception) {
-                    if (requestedSource == Triple(baseUrl, newApiKey, deleteApiKey) && requestedHttp == allowHttp)
+                    if (requestedSource == Triple(baseUrl, newApiKey, deleteApiKey) &&
+                        requestedHttp == state.globalApiSettings.allowHttp)
                         modelError = ApiErrorMapper.message(error)
                 } finally { loadingModels = false }
             }
-        }, enabled = !loadingModels) { Text(if (loadingModels) "正在获取模型…" else "获取在线模型列表") }
-        modelError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }, enabled = !loadingModels) { UiText(if (loadingModels) "正在获取模型…" else "获取在线模型列表") }
+        modelError?.let { UiText(it, color = MaterialTheme.colorScheme.error) }
         TextButton(onClick = { advancedExpanded = !advancedExpanded }) {
-            Text(if (advancedExpanded) "高级模型参数  ⌃" else "高级模型参数  ⌄")
+            UiText(if (advancedExpanded) "高级模型参数  ⌃" else "高级模型参数  ⌄")
         }
         if (advancedExpanded) {
-        OutlinedTextField(temperature, { temperature = it }, label = { Text("Temperature") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(maxTokens, { maxTokens = it }, label = { Text("Max Output Tokens") }, modifier = Modifier.fillMaxWidth())
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("发送 Temperature 参数")
+            UiText("发送 Temperature 参数")
             Switch(checked = sendTemperature, onCheckedChange = { sendTemperature = it })
         }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("使用 max_completion_tokens")
-            Switch(checked = useMaxCompletionTokens, onCheckedChange = { useMaxCompletionTokens = it })
-        }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("流式输出")
-            Switch(checked = streaming, onCheckedChange = { streaming = it })
-        }
+        OutlinedTextField(temperature, { temperature = it }, label = { UiText("Temperature") },
+            enabled = sendTemperature, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            modifier = Modifier.fillMaxWidth())
         }
         } }
-        ElevatedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("思考深度", style = MaterialTheme.typography.titleMedium)
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("发送思考深度参数")
-            Switch(checked = sendReasoningEffort, onCheckedChange = { sendReasoningEffort = it })
-        }
-        Text("开启后，向 API 请求添加 reasoning_effort。关闭后不发送该参数，由模型服务端决定默认行为。",
-            style = MaterialTheme.typography.bodySmall)
-        Box {
-            OutlinedButton(onClick = { reasoningExpanded = true }, enabled = sendReasoningEffort,
-                modifier = Modifier.fillMaxWidth()) {
-                Text("思考深度：${reasoningEffort.displayName}")
-            }
-            DropdownMenu(expanded = reasoningExpanded && sendReasoningEffort,
-                onDismissRequest = { reasoningExpanded = false }) {
-                ReasoningEffort.entries.forEach { effort ->
-                    DropdownMenuItem(text = { Text(effort.displayName) }, onClick = {
-                        reasoningEffort = effort
-                        reasoningExpanded = false
-                    })
-                }
-            }
-        }
-        } }
-        ElevatedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("网络稳定性", style = MaterialTheme.typography.titleMedium)
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("自动重试")
-            Switch(checked = autoRetry, onCheckedChange = { autoRetry = it })
-        }
-        Text("仅针对符合条件的临时错误自动重试，可能产生额外 API 调用费用。",
-            style = MaterialTheme.typography.bodySmall)
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("允许重试 504")
-            Switch(checked = retryHttp504, onCheckedChange = { retryHttp504 = it })
-        }
-        Text("504 网关超时不代表上游未执行；开启后可能重复请求和计费。总自动重试关闭时此项不生效。",
-            style = MaterialTheme.typography.bodySmall)
-        OutlinedTextField(maxRetries, { maxRetries = it }, label = { Text("最大重试次数（0–5）") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            isError = maxRetries.toIntOrNull()?.let { it in 0..5 } != true,
-            modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(connectTimeout, { connectTimeout = it }, label = { Text("连接超时（10–60 秒）") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            isError = connectTimeout.toIntOrNull()?.let { it in 10..60 } != true,
-            modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(readTimeout, { readTimeout = it }, label = { Text("读取超时（30–600 秒）") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            isError = readTimeout.toIntOrNull()?.let { it in 30..600 } != true,
-            modifier = Modifier.fillMaxWidth())
-        } }
-        state.settingsMessage?.let { Text(it) }
+        state.settingsMessage?.let { UiText(it) }
     }
     }
     if (modelDialog) AlertDialog(onDismissRequest = { modelDialog = false },
-        title = { Text("选择模型") },
+        title = { UiText("选择模型") },
         text = { Column {
-            OutlinedTextField(modelQuery, { modelQuery = it }, label = { Text("搜索 Model ID") },
+            OutlinedTextField(modelQuery, { modelQuery = it }, label = { UiText("搜索 Model ID") },
                 modifier = Modifier.fillMaxWidth())
             val visible = models.orEmpty().filter { it.contains(modelQuery.trim(), ignoreCase = true) }
-            if (visible.isEmpty()) Text("没有可选模型。", modifier = Modifier.padding(12.dp))
+            if (visible.isEmpty()) UiText("没有可选模型。", modifier = Modifier.padding(12.dp))
             else LazyColumn(Modifier.fillMaxWidth().heightIn(max = 400.dp)) {
                 items(visible) { id ->
-                    ListItem(headlineContent = { Text(id) },
-                        trailingContent = { if (id == modelId) Text("当前") },
+                    ListItem(headlineContent = { androidx.compose.material3.Text(id) },
+                        trailingContent = { if (id == modelId) UiText("当前") },
                         modifier = Modifier.clickable { modelId = id; modelDialog = false })
                 }
             }
-        } }, confirmButton = { TextButton(onClick = { modelDialog = false }) { Text("取消") } })
+        } }, confirmButton = { TextButton(onClick = { modelDialog = false }) { UiText("取消") } })
     if (confirmDiscard) ConfirmModeActionDialog("放弃未保存的 API 修改？",
         "当前编辑内容尚未保存。",
         onConfirm = { confirmDiscard = false; onBack() },

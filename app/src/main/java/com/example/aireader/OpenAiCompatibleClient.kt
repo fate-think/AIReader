@@ -28,11 +28,11 @@ import javax.net.ssl.SSLException
 data class ApiConfig(
     val baseUrl: String = "",
     val modelId: String = "",
-    val temperature: Double = 0.3,
-    val maxOutputTokens: Int = 4096,
+    val temperature: Double = 1.0,
+    val maxOutputTokens: Int = 8192,
     val streaming: Boolean = true,
     val sendTemperature: Boolean = true,
-    val useMaxCompletionTokens: Boolean = false,
+    val sendMaxTokens: Boolean = true,
     val allowHttp: Boolean = false,
     val network: NetworkStabilitySettings = NetworkStabilitySettings(),
     val reasoning: ReasoningSettings = ReasoningSettings()
@@ -93,7 +93,7 @@ class OpenAiCompatibleClient(
         val url = baseUrl.trim().toHttpUrlOrNull()
             ?: throw ApiException("API Base URL 无效。")
         if (url.scheme != "https" && !(url.scheme == "http" && (allowHttp || allowHttpForTests))) {
-            throw ApiException("API Base URL 必须使用 HTTPS；如需 HTTP，请在 API 设置中开启允许 HTTP Base URL。")
+            throw ApiException("API Base URL 必须使用 HTTPS；如需 HTTP，请在大模型 API 配置的全局参数中开启允许 HTTP BaseURL。")
         }
         if (url.username.isNotEmpty() || url.password.isNotEmpty()) {
             throw ApiException("API Base URL 不能包含账号信息。")
@@ -156,7 +156,7 @@ class OpenAiCompatibleClient(
             .put("model", config.modelId)
             .put("messages", org.json.JSONArray().put(JSONObject().put("role", "user").put("content", userMessage)))
             .put("stream", stream)
-            .put(if (config.useMaxCompletionTokens) "max_completion_tokens" else "max_tokens", config.maxOutputTokens)
+        if (config.sendMaxTokens) body.put("max_tokens", config.maxOutputTokens)
         if (config.sendTemperature) body.put("temperature", config.temperature)
         if (config.reasoning.sendReasoningEffort) {
             body.put("reasoning_effort", config.reasoning.reasoningEffort.apiValue)

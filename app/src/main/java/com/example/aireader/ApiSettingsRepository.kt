@@ -68,11 +68,10 @@ class ApiSettingsRepository(
         val config = ApiConfig(
             baseUrl = saved.optString("baseUrl"),
             modelId = saved.optString("modelId"),
-            temperature = saved.optString("temperature", "0.3").toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.3,
-            maxOutputTokens = saved.optString("maxOutputTokens", "4096").toIntOrNull() ?: 4096,
+            temperature = saved.optString("temperature", "1.0").toDoubleOrNull()?.takeIf { it.isFinite() } ?: 1.0,
+            maxOutputTokens = saved.optString("maxOutputTokens", "8192").toIntOrNull() ?: 8192,
             streaming = saved.optBoolean("streaming", true),
             sendTemperature = saved.optBoolean("sendTemperature", true),
-            useMaxCompletionTokens = saved.optBoolean("useMaxCompletionTokens", false),
             allowHttp = saved.optBoolean("allowHttp", false),
             network = NetworkStabilitySettings(
                 autoRetry = saved.optBoolean("autoRetry", true),
@@ -100,7 +99,6 @@ class ApiSettingsRepository(
             .put("baseUrl", config.baseUrl).put("modelId", config.modelId)
             .put("temperature", config.temperature).put("maxOutputTokens", config.maxOutputTokens)
             .put("streaming", config.streaming).put("sendTemperature", config.sendTemperature)
-            .put("useMaxCompletionTokens", config.useMaxCompletionTokens)
             .put("allowHttp", config.allowHttp)
             .put("autoRetry", config.network.autoRetry)
             .put("maxRetries", config.network.maxRetries)

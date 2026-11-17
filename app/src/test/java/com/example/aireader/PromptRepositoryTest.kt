@@ -255,7 +255,7 @@ class PromptRepositoryTest {
         val custom = repo.add("分析", "完整提示词\n末行  \n").modes.last()
         repo.select(custom.id)
         val selected = repo.catalogs.first().modes.single { it.id == custom.id }
-        val processed = ArticlePreprocessor.process("第一段。\n第二段。", PreprocessOptions())
+        val processed = ArticlePreprocessor.process("第一段。\n第二段。", PreprocessOptions(paraOnce = 3))
         assertEquals("完整提示词\n末行\n{段落1} 第一段。第二段。",
             buildUserMessage(selected.prompt, processed))
     } }
