@@ -1,6 +1,7 @@
 package com.example.aireader
 
 import android.content.Intent
+import android.content.ContextWrapper
 import android.os.Bundle
 import android.content.res.Configuration
 import androidx.activity.ComponentActivity
@@ -63,9 +64,15 @@ class MainActivity : ComponentActivity() {
             val activeLanguage = state.languageMode ?: LanguageMode.systemFallback(
                 systemConfiguration.locales[0])
             val localizedContext = remember(activeLanguage, systemConfiguration) {
-                createConfigurationContext(Configuration(systemConfiguration).apply {
+                val languageResources = createConfigurationContext(Configuration(systemConfiguration).apply {
                     setLocale(activeLanguage.locale)
-                })
+                }).resources
+                // Keep the Activity in the ContextWrapper chain so Activity Result launchers
+                // can resolve their owner while UI resources use the selected language.
+                object : ContextWrapper(this@MainActivity) {
+                    override fun getResources() = languageResources
+                    override fun getAssets() = languageResources.assets
+                }
             }
             val useDark = state.themeMode.usesDark(isSystemInDarkTheme())
             LaunchedEffect(useDark) {
