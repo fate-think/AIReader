@@ -14,6 +14,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -111,6 +114,16 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
     var historyId by rememberSaveable { mutableStateOf<String?>(null) }
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     var creating by rememberSaveable { mutableStateOf(false) }
+    var promptCategory by remember { mutableStateOf(PromptCategory.CUSTOM) }
+    val customPromptScroll = rememberLazyListState()
+    val builtInPromptScroll = rememberLazyListState()
+    var focusedPromptId by remember { mutableStateOf<String?>(null) }
+    var editorInitialName by rememberSaveable { mutableStateOf("") }
+    var editorInitialPrompt by rememberSaveable { mutableStateOf("") }
+    var editorName by rememberSaveable { mutableStateOf("") }
+    var editorPrompt by rememberSaveable { mutableStateOf("") }
+    var editorSaving by remember { mutableStateOf(false) }
+    var confirmDiscardPrompt by remember { mutableStateOf(false) }
     var previewOpen by rememberSaveable { mutableStateOf(false) }
     var htmlPreview by remember { mutableStateOf<String?>(null) }
     var historyPreviewMarkdown by remember { mutableStateOf<String?>(null) }
@@ -129,9 +142,31 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
         if (settingsDestination != SettingsDestination.API_EDIT) apiEditorId = null
         if (settingsDestination != SettingsDestination.API_EDIT) apiCreating = false
     }
+    val closePromptEditor: () -> Unit = {
+        creating = false
+        editingId = null
+        confirmDiscardPrompt = false
+    }
+    val requestPromptEditorExit: () -> Unit = {
+        if (!editorSaving) {
+            if (editorName != editorInitialName || editorPrompt != editorInitialPrompt)
+                confirmDiscardPrompt = true
+            else closePromptEditor()
+        }
+    }
+    val openPromptEditor: (String?) -> Unit = { id ->
+        val mode = state.modes.firstOrNull { it.id == id }
+        editorInitialName = mode?.name.orEmpty()
+        editorInitialPrompt = mode?.prompt.orEmpty()
+        editorName = editorInitialName
+        editorPrompt = editorInitialPrompt
+        creating = id == null
+        editingId = id
+    }
     val editorReady = apiCreating || state.selectedApiProfileId == apiEditorId && apiEditorId != null
     BackHandler(enabled = page == BottomTab.HISTORY.index && historyId != null &&
         historyPreviewMarkdown == null) { historyId = null }
+    BackHandler(enabled = creating || editingId != null) { requestPromptEditorExit() }
     BackHandler(enabled = page == BottomTab.SETTINGS.index && settingsDestination != SettingsDestination.HOME &&
         (settingsDestination != SettingsDestination.API_EDIT || !editorReady) &&
         historyPreviewMarkdown == null) {
@@ -189,7 +224,9 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
         ) {
             Row(modifier = Modifier.statusBarsPadding().padding(horizontal = 12.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically) {
-                if (page == BottomTab.SETTINGS.index && settingsDestination != SettingsDestination.HOME &&
+                if (creating || editingId != null) {
+                    TextButton(onClick = requestPromptEditorExit, enabled = !editorSaving) { UiText("‹ 返回") }
+                } else if (page == BottomTab.SETTINGS.index && settingsDestination != SettingsDestination.HOME &&
                     (settingsDestination != SettingsDestination.API_EDIT || !editorReady)) {
                     TextButton(onClick = goBackSettings) { UiText("‹ 返回") }
                 }
@@ -206,6 +243,8 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
             !(page == BottomTab.SETTINGS.index && settingsDestination == SettingsDestination.API_EDIT)) NavigationBar {
             BottomTab.entries.forEach { tab ->
                 NavigationBarItem(selected = page == tab.index, onClick = {
+                    if (tab == BottomTab.PROMPTS && page != BottomTab.PROMPTS.index)
+                        promptCategory = PromptCategory.CUSTOM
                     page = tab.index
                     settingsDestination = SettingsDestination.HOME
                     historyId = null
@@ -266,21 +305,31 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
             state.modes.isEmpty() && page != BottomTab.READING.index ->
                 UiText("提示词数据读取失败：${state.storageError ?: "未知错误"}", modifier = modifier)
             creating || editingId != null -> ModeEditor(
-                mode = state.modes.firstOrNull { it.id == editingId },
+                name = editorName, prompt = editorPrompt,
+                onNameChange = { editorName = it }, onPromptChange = { editorPrompt = it },
+                saving = editorSaving, onSavingChange = { editorSaving = it },
                 onSave = { name, prompt -> model.saveMode(editingId, name, prompt) },
-                onSaved = { creating = false; editingId = null },
-                onCancel = { creating = false; editingId = null },
+                onSaved = { id ->
+                    if (creating) promptCategory = PromptCategory.CUSTOM
+                    focusedPromptId = id
+                    closePromptEditor()
+                },
+                onCancel = requestPromptEditorExit,
                 onRestore = state.modes.firstOrNull { it.id == editingId && it.builtIn }?.let { mode ->
-                    { model.restoreDefault(mode.id); editingId = null }
+                    { model.restoreDefault(mode.id); closePromptEditor() }
                 },
                 onDelete = state.modes.firstOrNull { it.id == editingId && !it.builtIn }?.let { mode ->
-                    { model.deleteMode(mode.id); editingId = null }
+                    { model.deleteMode(mode.id); closePromptEditor() }
                 },
                 modifier = modifier)
             page == BottomTab.READING.index -> ReaderPage(state, model, previewTheme,
                 onHtmlPreview = { htmlPreview = it; previewOpen = true }, modifier = modifier)
-            page == BottomTab.PROMPTS.index -> ModesPage(state, model, onEdit = { editingId = it },
-                onAdd = { creating = true }, modifier = modifier)
+            page == BottomTab.PROMPTS.index -> ModesPage(state, model, category = promptCategory,
+                onCategoryChange = { promptCategory = it },
+                customScroll = customPromptScroll, builtInScroll = builtInPromptScroll,
+                focusModeId = focusedPromptId, onFocusHandled = { focusedPromptId = null },
+                onEdit = { openPromptEditor(it) }, onAdd = { openPromptEditor(null) },
+                modifier = nestedModifier)
             else -> Unit
         }
     }
@@ -289,6 +338,11 @@ private fun App(state: ReaderState, model: ReaderViewModel, useDark: Boolean) {
             title = { UiText("提示词保存失败") }, text = { UiText(state.storageError.orEmpty()) },
             confirmButton = { TextButton(onClick = model::clearStorageError) { UiText("知道了") } })
     }
+    if (confirmDiscardPrompt) AlertDialog(onDismissRequest = { confirmDiscardPrompt = false },
+        title = { UiText("放弃未保存的修改？") },
+        text = { UiText("当前提示词还有尚未保存的内容。如果现在离开，本次修改将丢失。") },
+        confirmButton = { TextButton(onClick = closePromptEditor) { UiText("放弃修改") } },
+        dismissButton = { TextButton(onClick = { confirmDiscardPrompt = false }) { UiText("继续编辑") } })
 }
 
 @Composable
@@ -691,21 +745,67 @@ private fun PreviewDialog(processed: String, originalLength: Int, onDismiss: () 
     }
 }
 
+private enum class PromptCategory { CUSTOM, BUILT_IN }
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ModesPage(state: ReaderState, model: ReaderViewModel, onEdit: (String) -> Unit,
-                      onAdd: () -> Unit, modifier: Modifier) {
+private fun ModesPage(state: ReaderState, model: ReaderViewModel,
+                      category: PromptCategory, onCategoryChange: (PromptCategory) -> Unit,
+                      customScroll: LazyListState, builtInScroll: LazyListState,
+                      focusModeId: String?, onFocusHandled: () -> Unit,
+                      onEdit: (String) -> Unit, onAdd: () -> Unit, modifier: Modifier) {
     var pendingRestore by remember { mutableStateOf<ReadingMode?>(null) }
     var pendingDelete by remember { mutableStateOf<ReadingMode?>(null) }
+    val modes = state.modes.filter { it.builtIn == (category == PromptCategory.BUILT_IN) }
+    val listState = if (category == PromptCategory.CUSTOM) customScroll else builtInScroll
+    LaunchedEffect(focusModeId, category, modes) {
+        if (focusModeId != null) {
+            val index = modes.indexOfFirst { it.id == focusModeId }
+            if (index >= 0) {
+                if (listState.layoutInfo.visibleItemsInfo.none { it.key == focusModeId })
+                    listState.scrollToItem(index)
+                onFocusHandled()
+            }
+        }
+    }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        UiText("内置提示词", style = MaterialTheme.typography.titleLarge)
-        state.modes.filter { it.builtIn }.forEach { mode -> ModeCard(mode, onEdit,
-            onRestore = { pendingRestore = mode }, onDelete = null) }
-        HorizontalDivider()
-        UiText("我的自定义提示词", style = MaterialTheme.typography.titleLarge)
-        state.modes.filterNot { it.builtIn }.forEach { mode -> ModeCard(mode, onEdit,
-            onRestore = null, onDelete = { pendingDelete = mode }) }
-        if (state.modes.none { !it.builtIn }) UiText("还没有自定义阅读模式")
-        Button(onClick = onAdd, modifier = Modifier.fillMaxWidth()) { UiText("+ 新增提示词") }
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            SegmentedButton(
+                selected = category == PromptCategory.CUSTOM,
+                onClick = { onCategoryChange(PromptCategory.CUSTOM) },
+                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+            ) { UiText("我的自定义", maxLines = 2, overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center) }
+            SegmentedButton(
+                selected = category == PromptCategory.BUILT_IN,
+                onClick = { onCategoryChange(PromptCategory.BUILT_IN) },
+                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+            ) { UiText("内置提示词", maxLines = 2, overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center) }
+        }
+        if (modes.isEmpty() && category == PromptCategory.CUSTOM) {
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    UiText("还没有自定义提示词", style = MaterialTheme.typography.titleMedium)
+                    UiText("你可以创建自己的阅读提示词，在阅读页面中选择使用。",
+                        style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+                }
+            }
+        } else {
+            LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth(), state = listState,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(vertical = 4.dp)) {
+                items(modes, key = { it.id }) { mode ->
+                    ModeCard(mode, onEdit,
+                        onRestore = if (mode.builtIn) ({ pendingRestore = mode }) else null,
+                        onDelete = if (mode.builtIn) null else ({ pendingDelete = mode }))
+                }
+            }
+        }
+        Button(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
+            UiText("＋ 新增自定义提示词")
+        }
     }
     pendingRestore?.let { mode ->
         ConfirmModeActionDialog("恢复默认提示词？", "将从 APK 内置文件恢复“${mode.name}”的提示词正文。",
@@ -743,41 +843,36 @@ private fun ModeCard(mode: ReadingMode, onEdit: (String) -> Unit,
 }
 
 @Composable
-private fun ModeEditor(mode: ReadingMode?, onSave: suspend (String, String) -> Boolean,
-                       onSaved: () -> Unit, onCancel: () -> Unit, onRestore: (() -> Unit)?,
+private fun ModeEditor(name: String, prompt: String,
+                       onNameChange: (String) -> Unit, onPromptChange: (String) -> Unit,
+                       saving: Boolean, onSavingChange: (Boolean) -> Unit,
+                       onSave: suspend (String, String) -> String?,
+                       onSaved: (String) -> Unit, onCancel: () -> Unit, onRestore: (() -> Unit)?,
                        onDelete: (() -> Unit)?, modifier: Modifier) {
     val scope = rememberCoroutineScope()
-    var name by rememberSaveable(mode?.id) { mutableStateOf(mode?.name ?: "") }
-    var prompt by rememberSaveable(mode?.id) { mutableStateOf(mode?.prompt ?: "") }
-    var saving by remember { mutableStateOf(false) }
-    var confirmDiscard by remember { mutableStateOf(false) }
     var confirmRestore by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
-    val hasChanges = name != (mode?.name ?: "") || prompt != (mode?.prompt ?: "")
-    val leave = { if (hasChanges) confirmDiscard = true else onCancel() }
-    BackHandler { if (!saving) leave() }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        OutlinedTextField(value = name, onValueChange = { name = it }, label = { UiText("模式名称") },
+        OutlinedTextField(value = name, onValueChange = onNameChange, label = { UiText("模式名称") },
             modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = prompt, onValueChange = { prompt = it }, label = { UiText("提示词") },
+        OutlinedTextField(value = prompt, onValueChange = onPromptChange, label = { UiText("提示词") },
             modifier = Modifier.fillMaxWidth().height(360.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
-                saving = true
+                onSavingChange(true)
                 scope.launch {
-                    val success = onSave(name, prompt)
-                    saving = false
-                    if (success) onSaved()
+                    try {
+                        onSave(name, prompt)?.let(onSaved)
+                    } finally {
+                        onSavingChange(false)
+                    }
                 }
             }, enabled = !saving && name.isNotBlank() && prompt.isNotBlank()) { UiText("保存") }
-            OutlinedButton(onClick = leave, enabled = !saving) { UiText("取消") }
+            OutlinedButton(onClick = onCancel, enabled = !saving) { UiText("取消") }
         }
         if (onRestore != null) OutlinedButton(onClick = { confirmRestore = true }, enabled = !saving) { UiText("恢复默认") }
         if (onDelete != null) TextButton(onClick = { confirmDelete = true }, enabled = !saving) { UiText("删除此提示词") }
     }
-    if (confirmDiscard) ConfirmModeActionDialog("放弃未保存修改？", "编辑内容尚未保存。",
-        onConfirm = { confirmDiscard = false; onCancel() },
-        onDismiss = { confirmDiscard = false })
     if (confirmRestore && onRestore != null) ConfirmModeActionDialog("恢复默认提示词？",
         "将从 APK 内置文件恢复原始提示词；未保存的编辑内容会丢失。",
         onConfirm = { confirmRestore = false; onRestore() },

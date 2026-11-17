@@ -335,5 +335,13 @@ internal fun uiStringId(source: String): Int? = when (source) {
     "全局 API 参数尚未载入。" -> R.string.ui_334
     "全局 API 参数保存失败，请检查参数或存储数据。" -> R.string.ui_335
     "全局 API 参数读取失败，原数据未被覆盖。" -> R.string.ui_336
+    "我的自定义" -> R.string.ui_337
+    "还没有自定义提示词" -> R.string.ui_338
+    "你可以创建自己的阅读提示词，在阅读页面中选择使用。" -> R.string.ui_339
+    "＋ 新增自定义提示词" -> R.string.ui_340
+    "放弃未保存的修改？" -> R.string.ui_341
+    "当前提示词还有尚未保存的内容。如果现在离开，本次修改将丢失。" -> R.string.ui_342
+    "继续编辑" -> R.string.ui_343
+    "放弃修改" -> R.string.ui_344
     else -> null
 }

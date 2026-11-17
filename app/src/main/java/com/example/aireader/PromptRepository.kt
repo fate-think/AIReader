@@ -56,11 +56,12 @@ class PromptRepository(
         current.copy(selectedModeId = id)
     }
 
-    suspend fun add(name: String, prompt: String): PromptCatalog = update { current ->
+    suspend fun add(name: String, prompt: String, id: String = UUID.randomUUID().toString()): PromptCatalog = update { current ->
         validate(name, prompt)
+        require(id.isNotBlank() && current.modes.none { it.id == id }) { "Reading mode ID already exists" }
         val order = (current.modes.maxOfOrNull { it.createdOrder } ?: 3L) + 1
         current.copy(modes = current.modes + ReadingMode(
-            UUID.randomUUID().toString(), name.trim(), prompt, false, createdOrder = order))
+            id, name.trim(), prompt, false, createdOrder = order))
     }
 
     suspend fun save(id: String, name: String, prompt: String): PromptCatalog = update { current ->

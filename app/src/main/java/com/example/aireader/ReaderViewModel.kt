@@ -617,13 +617,19 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         catch (_: Exception) { _state.value = _state.value.copy(settingsMessage = "无法删除 API 配置。") }
     }
 
-    suspend fun saveMode(id: String?, name: String, prompt: String): Boolean = try {
-        if (id == null) promptRepository.add(name, prompt) else promptRepository.save(id, name, prompt)
-        true
+    suspend fun saveMode(id: String?, name: String, prompt: String): String? = try {
+        if (id == null) {
+            val newId = java.util.UUID.randomUUID().toString()
+            promptRepository.add(name, prompt, newId)
+            newId
+        } else {
+            promptRepository.save(id, name, prompt)
+            id
+        }
     } catch (cancelled: CancellationException) { throw cancelled }
     catch (_: Exception) {
         _state.value = _state.value.copy(storageError = "提示词保存失败，原内容已保留。")
-        false
+        null
     }
 
     fun deleteMode(id: String) = viewModelScope.launch {

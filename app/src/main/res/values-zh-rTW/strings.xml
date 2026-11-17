@@ -352,4 +352,12 @@
     <string name="ui_334">全域 API 參數尚未載入。</string>
     <string name="ui_335">無法儲存全域 API 參數，請檢查數值或儲存資料。</string>
     <string name="ui_336">無法讀取全域 API 參數，原有資料未被覆蓋。</string>
+    <string name="ui_337">我的自訂</string>
+    <string name="ui_338">還沒有自訂提示詞</string>
+    <string name="ui_339">你可以建立自己的閱讀提示詞，並在閱讀頁面中選擇使用。</string>
+    <string name="ui_340">＋ 新增自訂提示詞</string>
+    <string name="ui_341">放棄未儲存的修改？</string>
+    <string name="ui_342">目前提示詞仍有尚未儲存的內容。如果現在離開，本次修改將會遺失。</string>
+    <string name="ui_343">繼續編輯</string>
+    <string name="ui_344">放棄修改</string>
 </resources>

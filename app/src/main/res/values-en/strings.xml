@@ -352,4 +352,12 @@
     <string name="ui_334">Global API parameters have not loaded yet.</string>
     <string name="ui_335">Could not save global API parameters. Check the values or stored data.</string>
     <string name="ui_336">Could not read global API parameters. Existing data was not overwritten.</string>
+    <string name="ui_337">My custom prompts</string>
+    <string name="ui_338">No custom prompts yet</string>
+    <string name="ui_339">Create your own reading prompt and select it on the Reading page.</string>
+    <string name="ui_340">＋ Add custom prompt</string>
+    <string name="ui_341">Discard unsaved changes?</string>
+    <string name="ui_342">This prompt has unsaved changes. Leaving now will discard them.</string>
+    <string name="ui_343">Keep editing</string>
+    <string name="ui_344">Discard changes</string>
 </resources>
