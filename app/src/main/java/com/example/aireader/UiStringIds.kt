@@ -87,7 +87,7 @@ internal fun uiStringId(source: String): Int? = when (source) {
     "分享结果" -> R.string.ui_084
     "分享阅读报告" -> R.string.ui_085
     "分享阅读结果" -> R.string.ui_086
-    "切换 API 配置  ⌄" -> R.string.ui_087
+    "切换 API 配置" -> R.string.ui_087
     "删除" -> R.string.ui_088
     "删除 API 配置？" -> R.string.ui_089
     "删除历史失败，请重试。" -> R.string.ui_090
@@ -145,8 +145,7 @@ internal fun uiStringId(source: String): Int? = when (source) {
     "当前模型可能不支持所选思考深度，请尝试其他档位。" -> R.string.ui_142
     "当前编辑内容尚未保存。" -> R.string.ui_143
     "思考深度" -> R.string.ui_144
-    "思考过程  ⌃" -> R.string.ui_145
-    "思考过程  ⌄" -> R.string.ui_146
+    "思考过程" -> R.string.ui_145
     "恢复默认" -> R.string.ui_147
     "恢复默认提示词失败。" -> R.string.ui_148
     "恢复默认提示词？" -> R.string.ui_149
@@ -324,8 +323,7 @@ internal fun uiStringId(source: String): Int? = when (source) {
     "预览 Markdown" -> R.string.ui_321
     "预览处理结果" -> R.string.ui_322
     "预览最终发送内容" -> R.string.ui_323
-    "高级模型参数  ⌃" -> R.string.ui_324
-    "高级模型参数  ⌄" -> R.string.ui_325
+    "高级模型参数" -> R.string.ui_324
     "默认 API 配置" -> R.string.ui_326
     "API 配置列表" -> R.string.ui_327
     "全局参数" -> R.string.ui_328

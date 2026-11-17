@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -75,7 +76,7 @@ fun ApiSettingsList(state: ReaderState, model: ReaderViewModel,
                 .padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 UiText("API 配置列表", style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f))
-                UiText(if (profilesExpanded) "⌃" else "⌄")
+                ExpandCollapseArrow(profilesExpanded)
             }
             if (profilesExpanded) {
                 HorizontalDivider()
@@ -125,7 +126,7 @@ fun ApiSettingsList(state: ReaderState, model: ReaderViewModel,
                 .padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 UiText("全局参数", style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f))
-                UiText(if (globalExpanded) "⌃" else "⌄")
+                ExpandCollapseArrow(globalExpanded)
             }
             state.globalApiSettingsMessage?.let {
                 UiText(it, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -417,7 +418,11 @@ fun ApiSettingsEditor(state: ReaderState, model: ReaderViewModel, isNew: Boolean
         }, enabled = !loadingModels) { UiText(if (loadingModels) "正在获取模型…" else "获取在线模型列表") }
         modelError?.let { UiText(it, color = MaterialTheme.colorScheme.error) }
         TextButton(onClick = { advancedExpanded = !advancedExpanded }) {
-            UiText(if (advancedExpanded) "高级模型参数  ⌃" else "高级模型参数  ⌄")
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                UiText("高级模型参数")
+                ExpandCollapseArrow(advancedExpanded)
+            }
         }
         if (advancedExpanded) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

@@ -86,7 +86,7 @@
     <string name="ui_084">分享结果</string>
     <string name="ui_085">分享阅读报告</string>
     <string name="ui_086">分享阅读结果</string>
-    <string name="ui_087">切换 API 配置  ⌄</string>
+    <string name="ui_087">切换 API 配置</string>
     <string name="ui_088">删除</string>
     <string name="ui_089">删除 API 配置？</string>
     <string name="ui_090">删除历史失败，请重试。</string>
@@ -144,8 +144,7 @@
     <string name="ui_142">当前模型可能不支持所选思考深度，请尝试其他档位。</string>
     <string name="ui_143">当前编辑内容尚未保存。</string>
     <string name="ui_144">思考深度</string>
-    <string name="ui_145">思考过程  ⌃</string>
-    <string name="ui_146">思考过程  ⌄</string>
+    <string name="ui_145">思考过程</string>
     <string name="ui_147">恢复默认</string>
     <string name="ui_148">恢复默认提示词失败。</string>
     <string name="ui_149">恢复默认提示词？</string>
@@ -323,8 +322,7 @@
     <string name="ui_321">预览 Markdown</string>
     <string name="ui_322">预览处理结果</string>
     <string name="ui_323">预览最终发送内容</string>
-    <string name="ui_324">高级模型参数  ⌃</string>
-    <string name="ui_325">高级模型参数  ⌄</string>
+    <string name="ui_324">高级模型参数</string>
     <string name="ui_326">默认 API 配置</string>
     <string name="ui_dyn_char_count">%1$s 字</string>
     <string name="ui_dyn_font_size">HTML 阅读字号：%1$spx</string>

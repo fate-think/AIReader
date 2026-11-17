@@ -86,7 +86,7 @@
     <string name="ui_084">分享結果</string>
     <string name="ui_085">分享閱讀報告</string>
     <string name="ui_086">分享閱讀結果</string>
-    <string name="ui_087">切換 API 設定  ⌄</string>
+    <string name="ui_087">切換 API 設定</string>
     <string name="ui_088">刪除</string>
     <string name="ui_089">刪除 API 設定？</string>
     <string name="ui_090">刪除紀錄失敗，請重試。</string>
@@ -144,8 +144,7 @@
     <string name="ui_142">當前模型可能不支持所選思考深度，請嘗試其他檔位。</string>
     <string name="ui_143">當前編輯內容尚未保存。</string>
     <string name="ui_144">思考深度</string>
-    <string name="ui_145">思考過程  ⌃</string>
-    <string name="ui_146">思考過程  ⌄</string>
+    <string name="ui_145">思考過程</string>
     <string name="ui_147">恢復預設</string>
     <string name="ui_148">恢復預設提示詞失敗。</string>
     <string name="ui_149">恢復預設提示詞？</string>
@@ -323,8 +322,7 @@
     <string name="ui_321">預覽 Markdown</string>
     <string name="ui_322">預覽處理結果</string>
     <string name="ui_323">預覽最終發送內容</string>
-    <string name="ui_324">高級模型參數  ⌃</string>
-    <string name="ui_325">高級模型參數  ⌄</string>
+    <string name="ui_324">高級模型參數</string>
     <string name="ui_326">預設 API 設定</string>
     <string name="ui_dyn_char_count">%1$s 字</string>
     <string name="ui_dyn_font_size">HTML 閱讀字號：%1$spx</string>

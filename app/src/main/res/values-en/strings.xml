@@ -86,7 +86,7 @@
     <string name="ui_084">Share result</string>
     <string name="ui_085">Share reading report</string>
     <string name="ui_086">Share reading result</string>
-    <string name="ui_087">Switch API configuration  ⌄</string>
+    <string name="ui_087">Switch API configuration</string>
     <string name="ui_088">Delete</string>
     <string name="ui_089">Delete API configuration?</string>
     <string name="ui_090">Could not delete history. Please retry.</string>
@@ -144,8 +144,7 @@
     <string name="ui_142">This model may not support the selected reasoning effort. Try another level.</string>
     <string name="ui_143">Current edits have not been saved.</string>
     <string name="ui_144">Reasoning effort</string>
-    <string name="ui_145">Thinking process  ⌃</string>
-    <string name="ui_146">Thinking process  ⌄</string>
+    <string name="ui_145">Thinking process</string>
     <string name="ui_147">Restore default</string>
     <string name="ui_148">Could not restore the default prompt.</string>
     <string name="ui_149">Restore default prompt?</string>
@@ -323,8 +322,7 @@
     <string name="ui_321">Preview Markdown</string>
     <string name="ui_322">Preview processed article</string>
     <string name="ui_323">Preview final sent content</string>
-    <string name="ui_324">Advanced model parameters  ⌃</string>
-    <string name="ui_325">Advanced model parameters  ⌄</string>
+    <string name="ui_324">Advanced model parameters</string>
     <string name="ui_326">Default API configuration</string>
     <string name="ui_dyn_char_count">%1$s characters</string>
     <string name="ui_dyn_font_size">HTML font size: %1$spx</string>

@@ -364,7 +364,11 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
             style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Box {
             TextButton(onClick = { apiExpanded = true }, enabled = state.apiProfiles.isNotEmpty()) {
-                UiText("切换 API 配置  ⌄")
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    UiText("切换 API 配置")
+                    ExpandCollapseArrow(apiExpanded)
+                }
             }
             DropdownMenu(expanded = apiExpanded, onDismissRequest = { apiExpanded = false }) {
                 state.apiProfiles.forEach { profile ->
@@ -377,8 +381,14 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
             color = MaterialTheme.colorScheme.error)
         Box {
             TextButton(onClick = { expanded = true }) {
-                androidx.compose.material3.Text("${state.modes.firstOrNull { it.id == state.selectedModeId }?.name ?: context.uiString("选择阅读模式")}  ⌄",
-                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Text(
+                        state.modes.firstOrNull { it.id == state.selectedModeId }?.name
+                            ?: context.uiString("选择阅读模式"),
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    ExpandCollapseArrow(expanded)
+                }
             }
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 UiText("内置阅读模式", modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -455,7 +465,11 @@ private fun ReaderPage(state: ReaderState, model: ReaderViewModel,
             ElevatedCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp)) {
                     TextButton(onClick = { thinkingExpanded = !thinkingExpanded }) {
-                        UiText(if (thinkingExpanded) "思考过程  ⌃" else "思考过程  ⌄")
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            UiText("思考过程")
+                            ExpandCollapseArrow(thinkingExpanded)
+                        }
                     }
                     if (thinkingExpanded) SelectionContainer {
                         androidx.compose.material3.Text(state.thinking, modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp)
