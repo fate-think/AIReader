@@ -235,11 +235,15 @@ class ApiProfilesRepositoryTest {
                 assertEquals("model-B", bJson.getString("model"))
                 assertEquals("medium", bJson.getString("reasoning_effort"))
                 assertEquals(0.6, bJson.getDouble("temperature"), 0.0)
-                server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"content":"OK"}}]}"""))
+                server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream")
+                    .setBody("""data: {"choices":[{"delta":{"content":"OK"},"finish_reason":null}]}""" +
+                        "\n\ndata: [DONE]\n\n"))
                 client.testConnection(global.applyTo(bProfile.config), repo.loadKey(b).value!!)
                 val recorded = server.takeRequest()
                 assertEquals("Bearer key-B", recorded.getHeader("Authorization"))
-                assertEquals("model-B", JSONObject(recorded.body.readUtf8()).getString("model"))
+                val testBody = JSONObject(recorded.body.readUtf8())
+                assertEquals("model-B", testBody.getString("model"))
+                assertTrue(testBody.getBoolean("stream"))
             } finally { server.shutdown() }
         }
     }
