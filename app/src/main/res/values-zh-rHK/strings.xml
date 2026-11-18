@@ -360,4 +360,7 @@
     <string name="ui_342">目前提示詞仍有尚未儲存的內容。如果現在離開，本次修改將會遺失。</string>
     <string name="ui_343">繼續編輯</string>
     <string name="ui_344">放棄修改</string>
+    <string name="ui_345">已儲存</string>
+    <string name="ui_346">已刪除</string>
+    <string name="ui_347">已恢復預設</string>
 </resources>

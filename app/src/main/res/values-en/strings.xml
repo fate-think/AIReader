@@ -360,4 +360,7 @@
     <string name="ui_342">This prompt has unsaved changes. Leaving now will discard them.</string>
     <string name="ui_343">Keep editing</string>
     <string name="ui_344">Discard changes</string>
+    <string name="ui_345">Saved</string>
+    <string name="ui_346">Deleted</string>
+    <string name="ui_347">Defaults restored</string>
 </resources>

@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.aireader"
+    namespace = "me.aireader.app"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.aireader"
+        applicationId = "me.aireader.app"
         minSdk = 26
         targetSdk = 35
         versionCode = 35
