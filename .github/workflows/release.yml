@@ -117,7 +117,7 @@ jobs:
 
           with open(sys.argv[1], encoding="utf-8") as stream:
               data = json.load(stream)
-          assert data["applicationId"] == "com.example.aireader"
+          assert data["applicationId"] == "me.aireader.app"
           assert data["variantName"] == "release"
           assert len(data["elements"]) == 1
           item = data["elements"][0]
