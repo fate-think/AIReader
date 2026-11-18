@@ -253,3 +253,8 @@ AIReader is licensed under the [Apache License, Version 2.0](LICENSE).
 You may use, modify, and distribute this project, including for commercial purposes, subject to the terms and conditions of the license. When redistributing it, retain required copyright and license notices and identify modified files as required by the license.
 
 See [LICENSE](LICENSE) for the full license text.
+
+
+## Acknowledgments
+
+- [Linux.do](https://linux.do)

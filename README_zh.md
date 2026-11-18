@@ -252,3 +252,7 @@ AIReader（AI 阅读助手）采用 [Apache License 2.0](LICENSE) 开源协议�
 您可以依照协议使用、修改和分发本项目，包括用于商业用途。再分发时，请按协议要求保留必要的版权和许可证声明，并标注修改过的文件。
 
 完整协议正文请参阅 [LICENSE](LICENSE)。
+
+## 感谢
+
+- [Linux.do](https://linux.do)
